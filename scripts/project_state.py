@@ -26,6 +26,7 @@ TASK_KEYS = ("id", "environment", "code_ref", "document_ref", "log", "artifacts"
 EVIDENCE_KEYS = ("id", "source", "ref", "summary", "code_ref", "checked_at")
 TRACKING_MODES = ("disabled", "key_events")
 ASSESSED_CONCLUSIONS = ("supported", "not_supported", "inconclusive")
+COORDINATOR_PREFIX = "Coordinator:"
 SLUG = r"[a-z0-9]+(?:-[a-z0-9]+)*"
 IDENTIFIER = r"[A-Za-z0-9][A-Za-z0-9._-]*"
 START = "<!-- plan-your-project:tracking:start -->"
@@ -171,7 +172,11 @@ def read_plan(plan_text):
     return pm, body, entries
 
 
-def validate_state(state, entries, root, check_refs=True):
+def coordinator_names(authorization):
+    return [entry.lstrip()[len(COORDINATOR_PREFIX):].strip() for entry in authorization if entry.lstrip().startswith(COORDINATOR_PREFIX)]
+
+
+def validate_state(state, entries, root, check_refs=True, allow_ambiguous_coordinator=False):
     exact(state, STATE_KEYS, "status")
     for key in ("summary", "next_action", "current_milestone"):
         text(state[key], key)
@@ -179,6 +184,9 @@ def validate_state(state, entries, root, check_refs=True):
     require(state["current_milestone"] in entries, "current_milestone absent from PLAN")
     for key in ("blockers", "must_read", "authorization"):
         strings(state[key], key, key in ("must_read", "authorization"))
+    owners = coordinator_names(state["authorization"])
+    if not allow_ambiguous_coordinator:
+        require(len(owners) <= 1 and all(owners), "Authorization must contain at most one nonempty Coordinator; resolve ownership with enable-tracking --coordinator")
     require(len(state["must_read"]) == len(set(state["must_read"])) and "research/PLAN.md" in state["must_read"], "must_read must uniquely include research/PLAN.md")
     for value in state["must_read"]:
         reference_path(root, value, required=check_refs)
@@ -292,7 +300,7 @@ def checkpoint_metadata(root):
     return result
 
 
-def read_workspace(root, allow_pending=False, check_refs=True):
+def read_workspace(root, allow_pending=False, check_refs=True, allow_ambiguous_coordinator=False):
     require(allow_pending or not io.pending_transaction(root), "unfinished transaction: run recover before trusting state or writing")
     layout, messages = legacy.classify_layout(root)
     require(layout == "v2", f"{layout} layout is read-only or unavailable: {'; '.join(messages)}")
@@ -317,7 +325,7 @@ def read_workspace(root, allow_pending=False, check_refs=True):
     else:
         sm, state = parse_status(status_raw)
         require(pm["plan_revision"] == sm["plan_revision"], "PLAN/STATUS revision mismatch")
-        validate_state(state, entries, root, check_refs=check_refs)
+        validate_state(state, entries, root, check_refs=check_refs, allow_ambiguous_coordinator=allow_ambiguous_coordinator)
         records = checkpoint_metadata(root)
         require(all(int(m[0]["plan_revision"]) <= int(pm["plan_revision"]) and int(m[0]["status_revision"]) <= int(sm["status_revision"]) for m in records.values()), "checkpoint is newer than current state")
     after = {"plan": io.hash_file(pp), "status": io.hash_file(sp)}
@@ -369,7 +377,7 @@ def checkpoint(root, args):
     exact(request, ("id", "date", "summary", "changes", "status"), "checkpoint request")
     check_request(request)
     strings(request["changes"], "changes", True)
-    snapshot = read_workspace(root, check_refs=False)
+    snapshot = read_workspace(root, check_refs=False, allow_ambiguous_coordinator=True)
     require_new(snapshot)
     if duplicate(root, request):
         return {"result": "unchanged", "id": request["id"]}
@@ -479,7 +487,7 @@ def resume(root):
         return {"result": "recovery_required", "read_only": True, "warnings": ["Pending transaction: run recover; do not trust a partial PLAN/STATUS pair."]}
     if layout in ("v1", "mixed"):
         return {"result": "legacy_read_only", "format": layout, "warnings": messages + ["Do not migrate or update v1/mixed layouts with this tool."], "git": git_facts(root)}
-    snapshot = read_workspace(root, check_refs=False)
+    snapshot = read_workspace(root, check_refs=False, allow_ambiguous_coordinator=True)
     return resume_snapshot(root, snapshot)
 
 
@@ -506,6 +514,9 @@ def resume_snapshot(root, snapshot):
     if len(snapshot["status_text"].splitlines()) > 100:
         warnings.append("STATUS exceeds the ~100-line target; shorten prose/must_read and link history without dropping important facts.")
     state = snapshot["status"]
+    owners = coordinator_names(state["authorization"]) if state else []
+    if len(owners) > 1 or not all(owners):
+        warnings.append("Ambiguous coordinator: current ownership is not unique/nonempty. Read-only inspection is available; use enable-tracking --coordinator with the confirmed owner before writing shared state.")
     warnings.extend(reference_warnings(root, snapshot))
     if state and len(state["must_read"]) > 5:
         warnings.append("Review the must_read list; keep only PLAN and materials needed for the next action.")
@@ -519,7 +530,7 @@ def resume_snapshot(root, snapshot):
 
 
 def handoff(root, args):
-    snapshot = read_workspace(root, check_refs=False)
+    snapshot = read_workspace(root, check_refs=False, allow_ambiguous_coordinator=True)
     state = snapshot["status"]
     lines = ["# 项目交接摘要：" + snapshot["project_name"], "", f"截止时间：{dt.datetime.now(dt.timezone.utc).isoformat()}", f"源格式：{snapshot['format']}；PLAN 修订 {snapshot['plan_revision']}；STATUS 修订 {snapshot['status_revision']}", f"PLAN SHA-256：{snapshot['hashes']['plan']}", f"STATUS SHA-256：{snapshot['hashes']['status']}", "", "## 接续规则", "先读项目规则与 STATUS，再读 PLAN 和下一动作必要材料；核对分支、HEAD、未提交改动及相关产物/运行状态。历史交接不能覆盖较新用户决定。", "本摘要不授予额外实验、发布或外部操作权限；仅继续已授权工作。未访问的服务器仍为未现场核验，不按旧报告宣布任务结束。", "", "## 目标与冻结边界"]
     lines.insert(3, f"来源工作区：{root}（跨电脑接续时需映射为目标电脑路径）")
@@ -543,7 +554,7 @@ def handoff(root, args):
         require(not target.exists(), "handoff output already exists; use a new path")
         with io.WorkspaceLock(root):
             expected = {paths(root)[0]: snapshot["hashes"]["plan"], paths(root)[1]: snapshot["hashes"]["status"], target: None}
-            io.commit_files(root, {target: output}, expected, lambda: read_workspace(root, allow_pending=True, check_refs=False))
+            io.commit_files(root, {target: output}, expected, lambda: read_workspace(root, allow_pending=True, check_refs=False, allow_ambiguous_coordinator=True))
         return {"result": "saved", "output": str(target)}
     return output
 
@@ -583,15 +594,16 @@ def tracking_authorization(args, required=False):
     entries = []
     if args.authorization is not None:
         strings(args.authorization, "authorization", required=True)
+        require(not any(entry.lstrip().startswith(COORDINATOR_PREFIX) for entry in args.authorization), "Coordinator: is reserved; supply the current owner with --coordinator, not --authorization")
         entries.extend(args.authorization)
     if args.coordinator is not None:
         text(args.coordinator, "coordinator")
-        entries.append("Coordinator: " + args.coordinator)
+        entries.append(COORDINATOR_PREFIX + " " + args.coordinator.strip())
     return entries
 
 
 def enable_tracking(root, args):
-    snapshot = read_workspace(root, check_refs=False)
+    snapshot = read_workspace(root, check_refs=False, allow_ambiguous_coordinator=True)
     pp, sp = paths(root)
     files, entry_originals, entry_expected = tracking_entries(root, args.claude_bridge)
     is_old = snapshot["format"] != FORMAT
@@ -608,17 +620,28 @@ def enable_tracking(root, args):
         preview["status_template"] = {"summary": "需根据旧状态和证据逐项核对后填写。", "state": snapshot["status_metadata"]["state"] if snapshot["status_metadata"]["state"] != "complete" else "in_progress", "current_milestone": snapshot["status_metadata"]["current_milestone"], "milestones": [empty_milestone(key) for key in snapshot["milestone_entries"]], "running_tasks": [], "blockers": [], "next_action": "核对旧状态与当前证据后确定下一步", "must_read": ["research/PLAN.md"], "evidence": [], "authorization": ["迁移仅整理已授权工作事实；未核实的旧验收不能标为已接受。"]}
         if args.status_file:
             state = load_json(args.status_file)
-            validate_state(state, snapshot["milestone_entries"], root)
+            validate_state(state, snapshot["milestone_entries"], root, allow_ambiguous_coordinator=True)
         else:
             preview["notes"].append("Review/fill status_template, then preview again with --status-file to inspect the exact PLAN/STATUS diff before applying.")
     if missing_agreement:
         preview["notes"].append("Supply --authorization describing tracking scope/source and --coordinator from the existing agreement, then preview the exact STATUS changes.")
+    previous_owners = coordinator_names(state["authorization"]) if state else []
+    coordinator_changed = False
     if state is not None:
+        if args.coordinator is not None:
+            current_entries = [entry for entry in state["authorization"] if entry.lstrip().startswith(COORDINATOR_PREFIX)]
+            coordinator_changed = current_entries != [COORDINATOR_PREFIX + " " + args.coordinator.strip()]
+            if coordinator_changed:
+                state["authorization"] = [entry for entry in state["authorization"] if not entry.lstrip().startswith(COORDINATOR_PREFIX)]
         state["authorization"] = list(dict.fromkeys(state["authorization"] + agreement))
+        owners = coordinator_names(state["authorization"])
+        if len(owners) > 1 or not all(owners):
+            preview["warnings"].append("Ambiguous coordinator: supply --coordinator with the confirmed current owner; the preview does not choose one.")
     state_changed = state is not None and (activating or state != snapshot["status"])
     revision = 1 if is_old else snapshot["status_revision"] + 1
-    if state_changed and not missing_agreement:
+    if state is not None and (args.apply or (state_changed and not missing_agreement)):
         validate_state(state, snapshot["milestone_entries"], root)
+    if state_changed and not missing_agreement:
         if is_old:
             files[pp] = snapshot["plan_text"].replace("workspace_format: plan-your-project/v2\n", f"workspace_format: {FORMAT}\n", 1)
         files[sp] = render_status(state, snapshot["plan_revision"], revision, args.date, "key_events")
@@ -645,6 +668,9 @@ def enable_tracking(root, args):
         request = {"id": "enable-tracking-" + tag.lower(), "date": args.date, "summary": "保存关键事件记录约定；原状态以备份保留。", "status": state}
         record = root / f"research/records/checkpoints/{args.date}-{request['id']}.md"
         changes = ["Originals preserved at " + backup.relative_to(root).as_posix(), "Tracking agreement recorded; no execution/acceptance inferred automatically."]
+        if coordinator_changed:
+            changes.append("Coordinator changed: " + (", ".join(owner or "(empty)" for owner in previous_owners) or "(not recorded)") + " -> " + args.coordinator.strip())
+            changes.extend("Handoff authorization/reason: " + entry for entry in (args.authorization or ["Explicit --coordinator instruction; no additional reason supplied."]))
         files[record] = record_text("migration" if is_old else "checkpoint", request, snapshot, snapshot["plan_revision"], revision, changes, state)
     commit(root, files, expected)
     return {"result": "enabled", "format": FORMAT, "backup": str(backup)}

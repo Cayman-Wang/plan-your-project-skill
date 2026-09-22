@@ -87,7 +87,7 @@ tracking 仅 `disabled/key_events`，不是状态 JSON 的可编辑字段。disa
 - 里程碑 evidence 是 Evidence 的 ID 数组；acceptance_basis 仅未接受时可为空。passed/failed 或已评估结论 supported/not_supported/inconclusive 必须关联至少一个 observed/historical 证据；accepted 还要求 done、passed 和非空验收依据。负结果是否通过验收取决于冻结标准，不将假设被支持当作所有研究的默认验收条件。complete 要求全部 accepted、无活跃任务和阻塞；blocked 要求非空 blockers。
 - evidence 描述满足结构不等于证明了科学结论，工具不代替内容审查。旧证据可以保留，但恢复时提示其适用版本，不能将历史通过说成本轮实测。
 - must_read 唯一且含 `research/PLAN.md`；每项是已存在的规范工作区相对普通文件路径，不允许 `..`、绝对路径、外逸符号链接。保留直接影响下一步的材料，长清单提示精简。
-- authorization 非空，记录用户决定来源、范围和限制；历史授权不覆盖较新用户指令。每项为一句话，不从计划下一步推导新的权限。
+- authorization 非空，记录用户决定来源、范围和限制；历史授权不覆盖较新用户指令。每项为一句话，不从计划下一步推导新的权限。`Coordinator: NAME` 是当前写入负责人的保留条目，最多一条且 NAME 非空；新 CLI 输入用 --coordinator，不通过 --authorization 注入该条目。没有负责人条目的兼容记录仍可读取。
 
 Evidence 的每条对象恰为：
 
@@ -161,7 +161,9 @@ checkpoint frontmatter 保存格式、类型、id/date、计划/状态修订、�
 
 默认仅预览；`--claude-bridge` 可选。预览包含修改路径、AGENTS/CLAUDE具体diff、源哈希、旧状态，v2还给出用于人工核对的完整状态模板。旧引用失效应在预览报告，允许用经核实的迁移输入修复；映射后的新状态严格校验。应用需明确 `--apply --expected-plan-hash HASH --expected-status-hash HASH`；v2额外提供 `--status-file reviewed-state.json`，逐项保留实际进度、阻塞和证据，不从旧complete标签猜测全部验收。填写状态后先带 --status-file 再预览，查看确切PLAN/STATUS差异，再应用。
 
-首次启用（旧 v2 或 v2.1 disabled）应用时还须提供 `--authorization TEXT --coordinator TEXT`。未提供的预览只提示缺少约定，并不伪造授权或显示一份可直接应用的 STATUS；补齐后再预览确切差异。已有状态和 Authorization 原文保留，新约定去重追加。v2.1 启用只递增 status_revision，PLAN 字节不变，创建一次 checkpoint；v2 转换创建 migration 记录。已有 key_events 不重复要求约定，重复相同参数不增加修订/备份/记录。
+首次启用（旧 v2 或 v2.1 disabled）应用时还须提供 `--authorization TEXT --coordinator TEXT`。未提供的预览只提示缺少约定，并不伪造授权或显示一份可直接应用的 STATUS；补齐后再预览确切差异。已有状态和普通 Authorization 原文保留，新约定去重追加；显式 --coordinator 替换所有旧 Coordinator 条目，仅保留一个当前负责人。检查点保存旧/新负责人及本次 --authorization 提供的交接原因或依据；没有提供额外原因时如实注明，不编造。v2.1 启用或负责人交接只递增 status_revision，PLAN 字节不变，创建一次 checkpoint；v2 转换创建 migration 记录。已有 key_events 不重复要求启用约定，重复相同负责人及参数不增加修订/备份/记录。
+
+旧工具曾写出多个 Coordinator 时，resume/handoff 仍可只读诊断并警告，validate 拒绝将其报告为有效。用已确认的 `enable-tracking --coordinator NAME` 预览/应用可修正，保留其他进度；不指定负责人时不自动选择。完整 checkpoint 输入也须满足单一负责人约束，避免重新引入歧义。此前已给出的交接指令可直接作为依据，不另设审批步骤。
 
 应用前将PLAN/STATUS及本次会修改的现有AGENTS/CLAUDE原件保存到 `.plan-your-project-backups/<timestamp>/`，与转换共同提交。保留旧记录；PLAN只变格式标记、不变目标或计划修订。STATUS转换为v2.1，并有migration checkpoint引用备份。AGENTS只替换唯一管理块或末尾追加，保留其他内容；CLAUDE只追加缺失的 `@AGENTS.md`。重复启用无变化，不重复备份或叠加入口。v1/mixed不支持此转换。
 

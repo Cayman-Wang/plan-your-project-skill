@@ -174,3 +174,11 @@ Windows 环境统一设置 `PYTHONUTF8=1`、`PYTHONIOENCODING=utf-8`，运行 `p
 2. **只有 AGENTS 的手工状态维护**。代理只可读合成工作区、只可写 STATUS，不能访问本 skill 或 CLI。输入报告记载三次 baseline 100/100/100 MiB、candidate 101/102/101 MiB；固定问题是至少降低 10%，报告来自不可访问主机的前序执行者，最终验收属于负责人。实际输出为 execution=done、validation=passed（明确基于历史报告）、acceptance=pending、conclusion=not_supported；Evidence.source=historical，下一步交给负责人验收，没有重跑或改变阈值。主代理独立检查原始 STATUS 和前后文件哈希：只有 STATUS 改变、文件数不变，随后新版 CLI validate 返回 valid、status_revision=2。
 
 这两次执行为导出语义和手工维护兼容性提供了直接证据；尚未证明其他模型/宿主长期接力的稳定性。未来可以复用以下最小输入重测：默认 schema_version 2.0 计划分别设置上述假设/范围，或将里程碑验收设为“固定协议及限制已报告，最终验收归负责人”；用 init/handoff 生成输入，保持评估代理无法读取本轮开发上下文。
+
+### 2026-09-23 协调负责人交接回归
+
+复审在 `d734bf9` 发现更换 --coordinator 会保留两条当前负责人。修正将 Coordinator 作为单值条目：显式换人替换旧值，检查点记录旧/新负责人和提供的交接依据。旧歧义记录保持只读可诊断，由明确指定的人选修复；新 checkpoint 不接受多个或空负责人。
+
+新增 `tests/test_coordinator_handoff.py` 的 5 个回归覆盖：M1 已验收、M2 运行中且已有证据时 Alice → Bob 交接仍保留进度与 PLAN；新历史保留源哈希、姓名和原因；重复同一负责人及依据无写入；无旧负责人兼容记录可设置当前人选；旧双负责人只读警告且不自行选人；非法前缀注入和空/竞争负责人被拒绝。
+
+同一 Windows UTF-8 环境完整执行 `python -m unittest discover -s tests -v`，最终结果：**Ran 108 tests in 68.439s；OK (skipped=5)**。符号链接权限限制与前述相同。此前手工接续场景的原始 STATUS 用修正后的 CLI 再次 validate，仍为 valid；未重复运行模型场景，也不据此扩展行为成功率结论。
