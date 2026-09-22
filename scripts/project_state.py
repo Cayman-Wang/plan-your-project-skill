@@ -24,6 +24,8 @@ STATE_KEYS = {"summary", "state", "current_milestone", "milestones", "running_ta
 MILESTONE_KEYS = ("id", "execution", "validation", "acceptance", "summary", "evidence", "acceptance_basis", "conclusion")
 TASK_KEYS = ("id", "environment", "code_ref", "document_ref", "log", "artifacts", "last_checked_at", "completion", "recovery")
 EVIDENCE_KEYS = ("id", "source", "ref", "summary", "code_ref", "checked_at")
+TRACKING_MODES = ("disabled", "key_events")
+ASSESSED_CONCLUSIONS = ("supported", "not_supported", "inconclusive")
 SLUG = r"[a-z0-9]+(?:-[a-z0-9]+)*"
 IDENTIFIER = r"[A-Za-z0-9][A-Za-z0-9._-]*"
 START = "<!-- plan-your-project:tracking:start -->"
@@ -205,10 +207,10 @@ def validate_state(state, entries, root, check_refs=True):
         require(milestone["execution"] in ("pending", "running", "done"), "invalid execution status")
         require(milestone["validation"] in ("not_run", "passed", "failed"), "invalid validation status")
         require(milestone["acceptance"] in ("pending", "accepted", "rejected"), "invalid acceptance status")
-        require(milestone["conclusion"] in ("not_applicable", "supported", "unverified"), "invalid research conclusion")
+        require(milestone["conclusion"] in ("not_applicable", "unverified", *ASSESSED_CONCLUSIONS), "invalid research conclusion")
         require(all(e in evidence for e in milestone["evidence"]), "unknown milestone evidence ID")
         supported = any(evidence[e]["source"] != "unverified" for e in milestone["evidence"])
-        if milestone["validation"] in ("passed", "failed") or milestone["conclusion"] == "supported":
+        if milestone["validation"] in ("passed", "failed") or milestone["conclusion"] in ASSESSED_CONCLUSIONS:
             require(supported, "validation/conclusion requires observed or historical evidence")
         if milestone["acceptance"] == "accepted":
             require(milestone["execution"] == "done" and milestone["validation"] == "passed" and bool(milestone["acceptance_basis"].strip()) and supported, "accepted milestone requires work done, passed validation, evidence and acceptance_basis")
@@ -221,15 +223,16 @@ def validate_state(state, entries, root, check_refs=True):
 
 def initial_state(plan):
     return {"summary": "计划已冻结，执行尚未开始。", "state": "planned", "current_milestone": plan["milestones"][0]["id"],
-            "milestones": [empty_milestone(m["id"]) for m in plan["milestones"]], "running_tasks": [], "blockers": [], "next_action": plan["next_action"], "must_read": ["research/PLAN.md"], "evidence": [], "authorization": ["仅执行已冻结计划及用户已授权事项；新目标和外部操作另按用户指令。"]}
+            "milestones": [empty_milestone(m["id"]) for m in plan["milestones"]], "running_tasks": [], "blockers": [], "next_action": plan["next_action"], "must_read": ["research/PLAN.md"], "evidence": [], "authorization": ["本次仅保存已确认计划；未据此授权实施或启用关键事件记录。"]}
 
 
 def empty_milestone(identifier):
     return {"id": identifier, "execution": "pending", "validation": "not_run", "acceptance": "pending", "summary": "尚未开始 / not started", "evidence": [], "acceptance_basis": "", "conclusion": "not_applicable"}
 
 
-def render_status(state, revision, status_revision, date):
-    metadata = ["---", f"workspace_format: {FORMAT}", "record: STATUS", f"plan_revision: {revision}", f"status_revision: {status_revision}", f"state: {state['state']}", f"current_milestone: {state['current_milestone']}", f"last_updated: {date}", "tracking: key_events", "---", "", "# Status", ""]
+def render_status(state, revision, status_revision, date, tracking="disabled"):
+    require(tracking in TRACKING_MODES, "invalid tracking mode")
+    metadata = ["---", f"workspace_format: {FORMAT}", "record: STATUS", f"plan_revision: {revision}", f"status_revision: {status_revision}", f"state: {state['state']}", f"current_milestone: {state['current_milestone']}", f"last_updated: {date}", f"tracking: {tracking}", "---", "", "# Status", ""]
     values = [state["summary"], render_records(state["milestones"], MILESTONE_KEYS), render_records(state["running_tasks"], TASK_KEYS), legacy.bullets(state["blockers"], "(none)"), state["next_action"], legacy.bullets(state["must_read"]), render_records(state["evidence"], EVIDENCE_KEYS), legacy.bullets(state["authorization"])]
     return "\n".join(metadata) + "\n\n".join(f"## {h}\n{value}" for h, value in zip(HEADINGS, values)) + "\n"
 
@@ -237,7 +240,7 @@ def render_status(state, revision, status_revision, date):
 def parse_status(raw):
     sm, body = legacy.metadata(raw)
     exact(sm, ("workspace_format", "record", "plan_revision", "status_revision", "state", "current_milestone", "last_updated", "tracking"), "STATUS metadata")
-    require(sm["workspace_format"] == FORMAT and sm["record"] == "STATUS" and sm["tracking"] == "key_events", "invalid STATUS format or tracking")
+    require(sm["workspace_format"] == FORMAT and sm["record"] == "STATUS" and sm["tracking"] in TRACKING_MODES, "invalid STATUS format or tracking")
     for field in ("plan_revision", "status_revision"):
         require(re.fullmatch(r"[1-9][0-9]*", sm[field]), f"invalid {field}")
     require(legacy.valid_iso_date(sm["last_updated"]), "invalid last_updated")
@@ -319,7 +322,7 @@ def read_workspace(root, allow_pending=False, check_refs=True):
         require(all(int(m[0]["plan_revision"]) <= int(pm["plan_revision"]) and int(m[0]["status_revision"]) <= int(sm["status_revision"]) for m in records.values()), "checkpoint is newer than current state")
     after = {"plan": io.hash_file(pp), "status": io.hash_file(sp)}
     require(before == consumed == after and (allow_pending or not io.pending_transaction(root)), "state changed during read; retry resume")
-    return {"format": pm["workspace_format"], "project_name": re.search(r"(?m)^# (.+)$", body).group(1), "plan_revision": int(pm["plan_revision"]), "status_revision": int(sm.get("status_revision", "0")), "hashes": after, "status": state, "plan_metadata": pm, "status_metadata": sm, "plan_body": body, "milestone_entries": entries, "plan_text": plan_raw, "status_text": status_raw}
+    return {"format": pm["workspace_format"], "project_name": re.search(r"(?m)^# (.+)$", body).group(1), "plan_revision": int(pm["plan_revision"]), "status_revision": int(sm.get("status_revision", "0")), "tracking": sm.get("tracking", "disabled"), "hashes": after, "status": state, "plan_metadata": pm, "status_metadata": sm, "plan_body": body, "milestone_entries": entries, "plan_text": plan_raw, "status_text": status_raw}
 
 
 def current_expected(root, args):
@@ -376,9 +379,28 @@ def checkpoint(root, args):
     pp, sp = paths(root)
     revision = snapshot["status_revision"] + 1
     record = root / f"research/records/checkpoints/{request['date']}-{request['id']}.md"
-    files = {sp: render_status(state, snapshot["plan_revision"], revision, request["date"]), record: record_text("checkpoint", request, snapshot, snapshot["plan_revision"], revision, request["changes"], state)}
+    files = {sp: render_status(state, snapshot["plan_revision"], revision, request["date"], snapshot["tracking"]), record: record_text("checkpoint", request, snapshot, snapshot["plan_revision"], revision, request["changes"], state)}
     commit(root, files, current_expected(root, args))
     return {"result": "updated", "id": request["id"], "status_revision": revision}
+
+
+def plan_changes(snapshot, body, revision):
+    """Keep changed frozen content in the existing record, independent of Git."""
+    changes = [f"PLAN revision {snapshot['plan_revision']} -> {revision}"]
+    old_body = snapshot["plan_body"]
+    old_title = snapshot["project_name"]
+    new_title = re.search(r"(?m)^# (.+)$", body).group(1)
+    if old_title != new_title:
+        changes += [f"Project name before: {old_title}", f"Project name after: {new_title}"]
+    headings = dict.fromkeys(re.findall(r"(?m)^## (.+)$", old_body + "\n" + body))
+    for heading in headings:
+        before, after = (legacy.section_body(source, heading) for source in (old_body, body))
+        if before == after:
+            continue
+        for label, version, content in (("before", snapshot["plan_revision"], before), ("after", revision, after)):
+            changes.append(f"{heading} ({label}, PLAN revision {version}):")
+            changes.extend("  " + line for line in (content or "(none)").splitlines() if line.strip())
+    return changes
 
 
 def refreeze(root, args):
@@ -426,6 +448,7 @@ def refreeze(root, args):
         state["state"] = "in_progress"
     validate_state(state, entries, root)
     changes = [args.summary, "Affected/revalidate: " + (", ".join(sorted(affected)) or "none"), "Removed (historical results retained here): " + (", ".join(sorted(set(old) - set(entries))) or "none")]
+    changes.extend(plan_changes(snapshot, body, revision))
     archived_evidence = set()
     for milestone in snapshot["status"]["milestones"]:
         if milestone["id"] in affected or milestone["id"] not in entries:
@@ -434,7 +457,7 @@ def refreeze(root, args):
     pp, sp = paths(root)
     sr = snapshot["status_revision"] + 1
     cp = root / f"research/records/checkpoints/{args.date}-{args.id}.md"
-    commit(root, {pp: rendered, sp: render_status(state, revision, sr, args.date), cp: record_text("refreeze", request, snapshot, revision, sr, changes, state, archived_evidence)}, current_expected(root, args))
+    commit(root, {pp: rendered, sp: render_status(state, revision, sr, args.date, snapshot["tracking"]), cp: record_text("refreeze", request, snapshot, revision, sr, changes, state, archived_evidence)}, current_expected(root, args))
     return {"result": "refrozen", "plan_revision": revision, "status_revision": sr, "affected": sorted(affected)}
 
 
@@ -492,7 +515,7 @@ def resume_snapshot(root, snapshot):
     for item in state["evidence"] if state else []:
         if item["source"] == "historical" or item["code_ref"] != git["head"]:
             warnings.append(f"Evidence {item['id']} applies to {item['code_ref']} ({item['source']}); recheck applicability to the current worktree.")
-    return {key: snapshot[key] for key in ("format", "project_name", "plan_revision", "status_revision", "hashes", "status")} | {"workspace_root": str(root), "result": "resumed", "warnings": warnings, "git": git, "legacy_status": snapshot["status_text"] if state is None else None, "read_order": ["project rules / AGENTS.md", "research/STATUS.md", "research/PLAN.md", "current must_read", "relevant live facts"]}
+    return {key: snapshot[key] for key in ("format", "project_name", "plan_revision", "status_revision", "tracking", "hashes", "status")} | {"workspace_root": str(root), "result": "resumed", "warnings": warnings, "git": git, "legacy_status": snapshot["status_text"] if state is None else None, "read_order": ["project rules / AGENTS.md", "research/STATUS.md", "research/PLAN.md", "current must_read", "relevant live facts"]}
 
 
 def handoff(root, args):
@@ -500,8 +523,9 @@ def handoff(root, args):
     state = snapshot["status"]
     lines = ["# 项目交接摘要：" + snapshot["project_name"], "", f"截止时间：{dt.datetime.now(dt.timezone.utc).isoformat()}", f"源格式：{snapshot['format']}；PLAN 修订 {snapshot['plan_revision']}；STATUS 修订 {snapshot['status_revision']}", f"PLAN SHA-256：{snapshot['hashes']['plan']}", f"STATUS SHA-256：{snapshot['hashes']['status']}", "", "## 接续规则", "先读项目规则与 STATUS，再读 PLAN 和下一动作必要材料；核对分支、HEAD、未提交改动及相关产物/运行状态。历史交接不能覆盖较新用户决定。", "本摘要不授予额外实验、发布或外部操作权限；仅继续已授权工作。未访问的服务器仍为未现场核验，不按旧报告宣布任务结束。", "", "## 目标与冻结边界"]
     lines.insert(3, f"来源工作区：{root}（跨电脑接续时需映射为目标电脑路径）")
+    lines.insert(5, f"进展记录：{snapshot['tracking']}；disabled 时仅按明确的记录请求维护，不能自动启用。")
     language = snapshot["plan_metadata"]["language"]
-    for heading in (("目标", "选定方案", "成功标准", "范围", "约束", "冻结决策", "里程碑") if language == "zh" else ("Goal", "Selected Approach", "Success Criteria", "Scope", "Constraints", "Locked Decisions", "Milestones")):
+    for heading in (("问题", "目标", "选定方案", "成功标准", "范围", "约束", "冻结决策", "里程碑", "风险", "假设", "开放问题", "证据", "冻结就绪度") if language == "zh" else ("Problem", "Goal", "Selected Approach", "Success Criteria", "Scope", "Constraints", "Locked Decisions", "Milestones", "Risks", "Assumptions", "Open Questions", "Evidence", "Freeze Readiness")):
         content = legacy.section_body(snapshot["plan_body"], heading) or "(none)"
         lines += [f"### {heading}", re.sub(r"(?m)^(#{3,5}) ", r"#\1 ", content)]
     checked = resume_snapshot(root, snapshot)
@@ -553,25 +577,57 @@ def tracking_entries(root, claude_bridge):
     return files, originals, expected
 
 
+def tracking_authorization(args, required=False):
+    if required:
+        require(args.authorization and args.coordinator, "enabling tracking requires --authorization and --coordinator recording the existing agreement")
+    entries = []
+    if args.authorization is not None:
+        strings(args.authorization, "authorization", required=True)
+        entries.extend(args.authorization)
+    if args.coordinator is not None:
+        text(args.coordinator, "coordinator")
+        entries.append("Coordinator: " + args.coordinator)
+    return entries
+
+
 def enable_tracking(root, args):
     snapshot = read_workspace(root, check_refs=False)
     pp, sp = paths(root)
     files, entry_originals, entry_expected = tracking_entries(root, args.claude_bridge)
     is_old = snapshot["format"] != FORMAT
-    preview = {"result": "preview", "from": snapshot["format"], "to": FORMAT, "hashes": snapshot["hashes"], "changes": [str(p.relative_to(root)) for p in files], "migration_requires_reviewed_status_file": is_old, "notes": ["No files were written. Existing history and rules will be preserved. Explicit --apply authorizes backup and conversion."]}
+    activating = snapshot["tracking"] == "disabled"
+    agreement = tracking_authorization(args, required=args.apply and activating)
+    missing_agreement = activating and not (args.authorization and args.coordinator)
+    preview = {"result": "preview", "from": snapshot["format"], "to": FORMAT, "tracking_from": snapshot["tracking"], "tracking_to": "key_events", "hashes": snapshot["hashes"], "changes": [str(p.relative_to(root)) for p in files], "migration_requires_reviewed_status_file": is_old, "requires_tracking_agreement": missing_agreement, "notes": ["No files were written. Existing history and rules will be preserved. Apply only within the user's existing authorization."]}
     preview["warnings"] = reference_warnings(root, snapshot)
     preview["diffs"] = {str(path.relative_to(root)): "".join(difflib.unified_diff(entry_originals.get(path, "").splitlines(keepends=True), value.splitlines(keepends=True), fromfile=str(path.relative_to(root)), tofile=str(path.relative_to(root)))) for path, value in files.items()}
+    state = copy.deepcopy(snapshot["status"])
     if is_old:
         preview["changes"] += ["research/PLAN.md marker", "research/STATUS.md", "migration checkpoint and backups"]
         preview["legacy_status"] = snapshot["status_text"]
         preview["status_template"] = {"summary": "需根据旧状态和证据逐项核对后填写。", "state": snapshot["status_metadata"]["state"] if snapshot["status_metadata"]["state"] != "complete" else "in_progress", "current_milestone": snapshot["status_metadata"]["current_milestone"], "milestones": [empty_milestone(key) for key in snapshot["milestone_entries"]], "running_tasks": [], "blockers": [], "next_action": "核对旧状态与当前证据后确定下一步", "must_read": ["research/PLAN.md"], "evidence": [], "authorization": ["迁移仅整理已授权工作事实；未核实的旧验收不能标为已接受。"]}
         if args.status_file:
-            proposed = load_json(args.status_file)
-            validate_state(proposed, snapshot["milestone_entries"], root)
-            for path, original, value in ((pp, snapshot["plan_text"], snapshot["plan_text"].replace("workspace_format: plan-your-project/v2\n", f"workspace_format: {FORMAT}\n", 1)), (sp, snapshot["status_text"], render_status(proposed, snapshot["plan_revision"], 1, args.date))):
-                preview["diffs"][str(path.relative_to(root))] = "".join(difflib.unified_diff(original.splitlines(keepends=True), value.splitlines(keepends=True), fromfile=str(path.relative_to(root)), tofile=str(path.relative_to(root))))
+            state = load_json(args.status_file)
+            validate_state(state, snapshot["milestone_entries"], root)
         else:
             preview["notes"].append("Review/fill status_template, then preview again with --status-file to inspect the exact PLAN/STATUS diff before applying.")
+    if missing_agreement:
+        preview["notes"].append("Supply --authorization describing tracking scope/source and --coordinator from the existing agreement, then preview the exact STATUS changes.")
+    if state is not None:
+        state["authorization"] = list(dict.fromkeys(state["authorization"] + agreement))
+    state_changed = state is not None and (activating or state != snapshot["status"])
+    revision = 1 if is_old else snapshot["status_revision"] + 1
+    if state_changed and not missing_agreement:
+        validate_state(state, snapshot["milestone_entries"], root)
+        if is_old:
+            files[pp] = snapshot["plan_text"].replace("workspace_format: plan-your-project/v2\n", f"workspace_format: {FORMAT}\n", 1)
+        files[sp] = render_status(state, snapshot["plan_revision"], revision, args.date, "key_events")
+        for path in (pp, sp):
+            if path in files:
+                original = snapshot["plan_text"] if path == pp else snapshot["status_text"]
+                preview["diffs"][str(path.relative_to(root))] = "".join(difflib.unified_diff(original.splitlines(keepends=True), files[path].splitlines(keepends=True), fromfile=str(path.relative_to(root)), tofile=str(path.relative_to(root))))
+        if not is_old:
+            preview["changes"] += ["research/STATUS.md", "tracking checkpoint and backups"]
     if not args.apply:
         return preview
     if not is_old and not files:
@@ -585,14 +641,11 @@ def enable_tracking(root, args):
         files[backup / path.relative_to(root)] = raw
     if is_old:
         require(args.status_file, "v2 apply requires --status-file reviewed against old progress, blockers and evidence; preview supplies a template")
-        state = load_json(args.status_file)
-        validate_state(state, snapshot["milestone_entries"], root)
-        request = {"id": "enable-tracking-" + tag.lower(), "date": args.date, "summary": "启用 v2.1 关键节点记录；历史状态以备份保留。", "status": state}
-        files[pp] = snapshot["plan_text"].replace("workspace_format: plan-your-project/v2\n", f"workspace_format: {FORMAT}\n", 1)
-        files[sp] = render_status(state, snapshot["plan_revision"], 1, args.date)
+    if state_changed:
+        request = {"id": "enable-tracking-" + tag.lower(), "date": args.date, "summary": "保存关键事件记录约定；原状态以备份保留。", "status": state}
         record = root / f"research/records/checkpoints/{args.date}-{request['id']}.md"
-        changes = ["Legacy originals preserved at " + str(backup.relative_to(root)), "Migrated using reviewed state; no execution/acceptance inferred automatically."]
-        files[record] = record_text("migration", request, snapshot, snapshot["plan_revision"], 1, changes, state)
+        changes = ["Originals preserved at " + backup.relative_to(root).as_posix(), "Tracking agreement recorded; no execution/acceptance inferred automatically."]
+        files[record] = record_text("migration" if is_old else "checkpoint", request, snapshot, snapshot["plan_revision"], revision, changes, state)
     commit(root, files, expected)
     return {"result": "enabled", "format": FORMAT, "backup": str(backup)}
 
@@ -604,16 +657,17 @@ def initialize(root, args):
     rendered = legacy.render_plan(plan, args.language, args.date, 1).replace("workspace_format: plan-your-project/v2\n", f"workspace_format: {FORMAT}\n", 1)
     _, _, entries = read_plan(rendered)
     state = initial_state(plan)
+    agreement = tracking_authorization(args, required=args.enable_tracking)
     if args.authorization is not None:
-        strings(args.authorization, "authorization", required=True)
-        state["authorization"] = args.authorization[:]
-    if args.coordinator is not None:
-        text(args.coordinator, "coordinator")
-        state["authorization"].append("Coordinator: " + args.coordinator)
+        state["authorization"] = agreement
+    elif agreement:
+        state["authorization"].extend(agreement)
     require(not args.claude_bridge or args.with_agents, "--claude-bridge requires --with-agents during init")
+    require(not args.with_agents or args.enable_tracking, "--with-agents requires --enable-tracking and its recorded agreement")
     validate_state(state, entries, root, check_refs=False)
     pp, sp = paths(root)
-    files = {pp: rendered, sp: render_status(state, 1, 1, args.date)}
+    tracking = "key_events" if args.enable_tracking else "disabled"
+    files = {pp: rendered, sp: render_status(state, 1, 1, args.date, tracking)}
     expected = {pp: None, sp: None}
     originals = {}
     if args.with_agents:
@@ -643,11 +697,13 @@ def parser():
             sub.add_argument("--date", type=legacy.parse_date, default=dt.date.today().isoformat())
         if name in ("init", "refreeze"):
             sub.add_argument("--plan-file", required=True)
+        if name in ("init", "enable-tracking"):
+            sub.add_argument("--authorization", action="append", help="Existing user authorization or restriction; repeat for multiple facts.")
+            sub.add_argument("--coordinator", help="Single coordinating writer, recorded in Authorization.")
         if name == "init":
             sub.add_argument("--language", choices=("zh", "en"), default="zh")
             sub.add_argument("--dry-run", action="store_true")
-            sub.add_argument("--authorization", action="append", help="Existing user authorization or restriction; repeat for multiple facts.")
-            sub.add_argument("--coordinator", help="Single coordinating writer, recorded in Authorization.")
+            sub.add_argument("--enable-tracking", action="store_true", help="Enable agreed key-event recording; requires --authorization and --coordinator.")
             sub.add_argument("--with-agents", action="store_true", help="Merge the tracking entry in the same initialization transaction.")
             sub.add_argument("--claude-bridge", action="store_true", help="Add @AGENTS.md; requires --with-agents.")
         if name in ("checkpoint", "refreeze", "enable-tracking"):
@@ -677,7 +733,7 @@ def dispatch(root, args):
         return resume(root)
     if command == "validate":
         snap = read_workspace(root)
-        return {"result": "valid", "format": snap["format"], "plan_revision": snap["plan_revision"], "status_revision": snap["status_revision"]}
+        return {"result": "valid", "format": snap["format"], "plan_revision": snap["plan_revision"], "status_revision": snap["status_revision"], "tracking": snap["tracking"]}
     if command == "checkpoint":
         return checkpoint(root, args)
     if command == "refreeze":

@@ -2,6 +2,8 @@
 
 日期：2026-09-22。
 
+下列原有八场景部分保留当时的静态评估记录。2026-09-23 的修复回归及两次实际新上下文执行见文末；两者的范围和证据不混用。
+
 ## 方法与结论边界
 
 输入为 `behavior_evals.json` 中固定的 8 个匿名场景及 40 条可观察标准。基线为公开仓库提交 [`120dba1d006e959dc456f007b0f9defcf9da39dd`](https://github.com/Cayman-Wang/plan-your-project-skill/tree/120dba1d006e959dc456f007b0f9defcf9da39dd)；新版为本次升级候选。评估者分别读取两版技能和相关协议，推演其要求的下一步，并与实际 CLI 集成测试区分报告。
@@ -145,3 +147,30 @@ python -m unittest discover -s tests -p 'test_project_state.py' -v
 - CLI 证据字段约束不能鉴定科学结论，也不能阻止调用者填写内容上不实但结构合法的记录。
 - 本组 CLI 测试不替代其他文件中的底层并发锁、故障注入和事务恢复测试。
 - 启用 tracking 不扩大实验、提交、推送或部署权限；旧 v2 的显式迁移步骤仍是合法且必要的采用边界。
+
+## 2026-09-23 接续修复：实际回归与新上下文执行
+
+本轮基线为 `95cb7d1c65fbc46609b0acb00c620711bc5b0c55`，候选改动补齐交接条件、修订字段历史、tracking 未启用状态和科研负结果枚举。全部行为输入为隔离的合成项目；不运行真实实验。
+
+### 确定性回归
+
+`tests/test_continuity_review.py` 的 8 个测试实际执行通过，覆盖：
+
+- 中英文 READY_WITH_ASSUMPTIONS 交接包含原假设、风险及验证安排、开放问题和冻结就绪度，且生成不写项目文件。
+- 没有 Git 历史时，修改后的决策与验收连同旧值保存在同一 refreeze 检查点，并标明源/目标修订；重放不重复写入。
+- 普通初始化是 disabled；明确单次 checkpoint 和 refreeze 均不隐式启用。显式启用一次保存约定，后续写入维持 key_events。
+- enable-tracking 的预览不写文件；未记录约定不可应用；旧哈希不能覆盖新进度；应用保留原状态，重复相同请求不新增修订或备份。
+- 原有 key_events 文件无需重新启用；已评估的 not_supported/inconclusive 必须有证据，负结果能按原冻结评估标准记录，而不伪装成假设成立。
+
+Windows 环境统一设置 `PYTHONUTF8=1`、`PYTHONIOENCODING=utf-8`，运行 `python -m unittest discover -s tests -v`：**Ran 103 tests in 59.961s；OK (skipped=5)**。跳过项为当前 Windows 未授予创建符号链接权限的检查；测试只对 WinError 1314 跳过，其他 OSError 正常失败，具备权限的环境仍执行原断言。未声称这些跳过项已在此环境验证。
+
+此前路径分隔符、Windows 短/长路径、CRLF 备份字节和 POSIX mode 的测试平台假设已修正，未放宽文件内容、事务回滚或旧哈希保护检查。skill 快速结构校验及 `git diff --check` 通过。
+
+### 两次实际新上下文接续
+
+方法：分别启动无父会话历史的 `gpt-5.6-terra`、medium 代理，每个场景一次。只给用户请求、允许访问的输入与写入范围，不提供审查结论、预期答案或实现。以下结果是本环境的单次行为 smoke，不是跨厂商盲测、成功率或新旧版效果差异实验。
+
+1. **仅有网页交接的条件方案**。从 READY_WITH_ASSUMPTIONS 计划导出 handoff；计划范围仅代表性试点，生产发布在范围外，512 MiB 内存假设未测量，生产规模分布未知。代理只能读 handoff，用户只要求判断能否扩大规模及下一步。实际回答识别未验证的内存假设、生产分布未知和授权边界，建议先审阅测量方案；没有执行实验或写入。它实际使用了导出文本中的条件，没有访问 PLAN。
+2. **只有 AGENTS 的手工状态维护**。代理只可读合成工作区、只可写 STATUS，不能访问本 skill 或 CLI。输入报告记载三次 baseline 100/100/100 MiB、candidate 101/102/101 MiB；固定问题是至少降低 10%，报告来自不可访问主机的前序执行者，最终验收属于负责人。实际输出为 execution=done、validation=passed（明确基于历史报告）、acceptance=pending、conclusion=not_supported；Evidence.source=historical，下一步交给负责人验收，没有重跑或改变阈值。主代理独立检查原始 STATUS 和前后文件哈希：只有 STATUS 改变、文件数不变，随后新版 CLI validate 返回 valid、status_revision=2。
+
+这两次执行为导出语义和手工维护兼容性提供了直接证据；尚未证明其他模型/宿主长期接力的稳定性。未来可以复用以下最小输入重测：默认 schema_version 2.0 计划分别设置上述假设/范围，或将里程碑验收设为“固定协议及限制已报告，最终验收归负责人”；用 init/handoff 生成输入，保持评估代理无法读取本轮开发上下文。

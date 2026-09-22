@@ -36,7 +36,8 @@ class WorkspaceIOTests(unittest.TestCase):
             with IO.WorkspaceLock(root):
                 IO.commit_files(root, {a: "new plan", b: "new status"}, expected, validate)
             self.assertFalse(IO.pending_transaction(root))
-            self.assertEqual(a.stat().st_mode & 0o777, 0o640)
+            if os.name != "nt":
+                self.assertEqual(a.stat().st_mode & 0o777, 0o640)
             self.assertTrue((root / IO.LOCK_NAME).is_file())
 
     def test_stale_hash_and_absence_assertion_do_not_write(self):
@@ -274,7 +275,12 @@ with w.WorkspaceLock(root):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw) / "workspace"; outside = Path(raw) / "outside"
             root.mkdir(); outside.mkdir()
-            (root / "research").symlink_to(outside, target_is_directory=True)
+            try:
+                (root / "research").symlink_to(outside, target_is_directory=True)
+            except OSError as exc:
+                if getattr(exc, "winerror", None) == 1314:
+                    self.skipTest(f"symbolic-link safety test requires symlink permission: {exc}")
+                raise
             target = root / "research/PLAN.md"
             with IO.WorkspaceLock(root):
                 with self.assertRaises(IO.WorkspaceIOError):
@@ -318,7 +324,12 @@ class LegacyContractRegressionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)/"workspace"; outside = Path(raw)/"outside"
             root.mkdir(); outside.mkdir()
-            (root/"research").symlink_to(outside, target_is_directory=True)
+            try:
+                (root/"research").symlink_to(outside, target_is_directory=True)
+            except OSError as exc:
+                if getattr(exc, "winerror", None) == 1314:
+                    self.skipTest(f"symbolic-link safety test requires symlink permission: {exc}")
+                raise
             process = subprocess.run([sys.executable, "-B", str(ROOT/"scripts/init_research_workspace.py"), "--workspace-root", str(root), "--plan-file", "-", "--json"], input=json.dumps(plan()), text=True, capture_output=True)
             self.assertNotEqual(process.returncode, 0)
             self.assertIn("escapes workspace", process.stdout)
