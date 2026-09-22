@@ -7,9 +7,13 @@ import json
 import os
 import re
 import sys
-import tempfile
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
+
+# Also support importlib-based test and embedding callers.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import workspace_io
 
 PLAN_NAME, STATUS_NAME = "PLAN.md", "STATUS.md"
 TOP_KEYS = {"schema_version", "project_name", "problem", "goal", "success_criteria", "scope", "constraints", "selected_approach", "alternatives_considered", "locked_decisions", "milestones", "risks", "assumptions", "open_questions", "evidence", "next_action", "freeze_readiness"}
@@ -30,70 +34,21 @@ def _unlink(path: Path) -> None:
 
 
 def commit_core_files(files: dict[Path, str], overwrite: bool) -> None:
-    """Commit PLAN and STATUS together, rolling both back after a failed commit."""
+    """Compatibility wrapper; recoverable paired writes, not a single rename.
+
+    The CLI uses commit_files directly with full workspace validation. This
+    wrapper retains the historical _replace test seam for library callers.
+    """
     paths = list(files)
-    staged: dict[Path, Path] = {}
-    backups: dict[Path, Path] = {}
-    committed: set[Path] = set()
-    retain_backups = False
+    if not paths:
+        raise ContractError("no core files supplied")
+    root = paths[0].parent.parent
     try:
-        for path, content in files.items():
-            path.parent.mkdir(parents=True, exist_ok=True)
-            fd, raw = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
-            temp = Path(raw)
-            staged[path] = temp
-            with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
-                handle.write(content)
-                handle.flush()
-                os.fsync(handle.fileno())
-
-        if overwrite:
-            for path in paths:
-                fd, raw = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".bak", dir=path.parent)
-                os.close(fd)
-                backup = Path(raw)
-                _unlink(backup)
-                backups[path] = backup
-                _replace(path, backup)
-
-        for path in paths:
-            _replace(staged[path], path)
-            committed.add(path)
-    except OSError as exc:
-        if overwrite:
-            rollback_errors = []
-            for path in paths:
-                backup = backups.get(path)
-                if backup is not None and backup.exists():
-                    try:
-                        _replace(backup, path)
-                    except OSError as rollback_exc:
-                        rollback_errors.append(f"{path}: {rollback_exc}")
-            if rollback_errors:
-                retained = [str(backup) for backup in backups.values() if backup.exists()]
-                retain_backups = True
-                retained_text = ", ".join(retained) if retained else "none"
-                raise ContractError(
-                    "core workspace commit failed and rollback failed: "
-                    + "; ".join(rollback_errors)
-                    + f"; retained backups: {retained_text}"
-                ) from exc
-        else:
-            try:
-                for path in committed:
-                    _unlink(path)
-            except OSError as rollback_exc:
-                raise ContractError(f"core workspace commit failed and rollback failed: {rollback_exc}") from exc
+        with workspace_io.WorkspaceLock(root):
+            expected = {path: workspace_io.hash_file(path) if overwrite else None for path in paths}
+            workspace_io._commit_files(root, files, expected, None, _replace)
+    except (workspace_io.WorkspaceIOError, OSError) as exc:
         raise ContractError(f"core workspace commit failed: {exc}") from exc
-    finally:
-        cleanup = tuple(staged.values())
-        if not retain_backups:
-            cleanup += tuple(backups.values())
-        for path in cleanup:
-            try:
-                _unlink(path)
-            except OSError:
-                pass
 
 def parse_date(value: str) -> str:
     if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", value):
@@ -107,7 +62,7 @@ def parse_args(argv=None):
     p.add_argument("--plan-file", metavar="FILE|-", help="Strict JSON frozen plan input; - reads stdin.")
     p.add_argument("--language", choices=("zh", "en"), default="zh")
     p.add_argument("--date", type=parse_date, default=dt.date.today().isoformat(), help="ISO date (YYYY-MM-DD).")
-    p.add_argument("--dry-run", action="store_true"); p.add_argument("--force-overwrite", action="store_true")
+    p.add_argument("--dry-run", action="store_true"); p.add_argument("--force-overwrite", action="store_true", help="Disabled compatibility flag: existing workspaces are read-only through this entrypoint.")
     p.add_argument("--validate-only", action="store_true"); p.add_argument("--adopt-existing-research-dir", action="store_true")
     p.add_argument("--json", action="store_true"); p.add_argument("--project-slug", help="Deprecated; ignored and does not affect paths.")
     a=p.parse_args(argv)
@@ -187,6 +142,11 @@ def load_plan(source):
 
 def classify_layout(root):
     research=root/"research"
+    try:
+        for name in (PLAN_NAME, STATUS_NAME):
+            workspace_io.ensure_within(root, research/name)
+    except workspace_io.WorkspaceIOError as exc:
+        return "invalid", [str(exc)]
     if not research.exists(): return "empty", []
     if not research.is_dir(): return "invalid", ["research is not a directory"]
     plan,status=research/PLAN_NAME,research/STATUS_NAME
@@ -269,11 +229,6 @@ def contains_placeholder(text: str) -> bool:
     return any(re.search(pattern, text) for pattern in patterns)
 
 
-def read_preserved_must_read(root: Path, language: str) -> str | None:
-    text = (root / "research" / STATUS_NAME).read_text(encoding="utf-8")
-    _, body = metadata(text)
-    must_read = "必读" if language == "zh" else "Must Read"
-    return section_body(body, must_read)
 def valid_iso_date(value: str) -> bool:
     if not isinstance(value, str) or not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", value):
         return False
@@ -296,7 +251,15 @@ def validate_v2_content(plan_text: str, status_text: str) -> list[str]:
     milestone_content = section_body(pt, milestone_heading) if milestone_heading else None
     milestones=[]
     for line in (milestone_content or "").splitlines():
-        if line.startswith("- ") and " - " in line and ("(acceptance:" in line or "(验收:" in line): milestones.append(line[2:].split(" - ",1)[0])
+        if not line.strip():
+            continue
+        match = re.fullmatch(r"- ([A-Za-z0-9][A-Za-z0-9._-]*) - (.+) \((?:acceptance|验收):\s*(.*?)\)\s*", line)
+        if not match or not match.group(2).strip() or not match.group(3).strip():
+            errors.append("PLAN milestone must have a valid ID, outcome and non-empty acceptance")
+            continue
+        milestones.append(match.group(1))
+    if len(milestones) != len(set(milestones)):
+        errors.append("PLAN milestone IDs must be unique")
     if sm.get("current_milestone") not in milestones: errors.append("STATUS current_milestone is absent from PLAN")
     plan_sections = {
         "zh": ("问题", "目标", "选定方案", "下一步", "成功标准", "约束", "冻结决策", "假设", "开放问题", "证据", "范围", "备选方案", "里程碑", "风险", "冻结就绪度"),
@@ -307,6 +270,23 @@ def validate_v2_content(plan_text: str, status_text: str) -> list[str]:
         "en": ("Next Action", "Blockers", "Must Read"),
     }
     if language in plan_sections:
+        headings = re.findall(r"(?m)^## (.+)$", pt)
+        if any(headings.count(heading) != 1 for heading in plan_sections[language]):
+            errors.append("PLAN must contain each required section exactly once")
+        readiness_heading = "冻结就绪度" if language == "zh" else "Freeze Readiness"
+        readiness = section_body(pt, readiness_heading)
+        if readiness not in ("READY", "READY_WITH_ASSUMPTIONS"):
+            errors.append("PLAN freeze readiness must be READY or READY_WITH_ASSUMPTIONS")
+        scope_heading = "范围" if language == "zh" else "Scope"
+        scope = section_body(pt, scope_heading) or ""
+        scope_labels = ("范围内", "范围外") if language == "zh" else ("In", "Out")
+        if re.findall(r"(?m)^### (.+)$", scope) != list(scope_labels):
+            errors.append("PLAN scope must contain its localized In and Out subsections")
+        else:
+            for label in scope_labels:
+                match = re.search(rf"(?ms)^### {re.escape(label)}\s*\n(.*?)(?=^### |\Z)", scope)
+                if match is None or not any(line.startswith("- ") and line[2:].strip() for line in match.group(1).splitlines()):
+                    errors.append("PLAN scope subsections must contain non-empty list content")
         if any(not section_body(pt, heading) for heading in plan_sections[language]):
             errors.append("PLAN body lacks required sections")
         if any(not section_body(st, heading) for heading in status_sections[language]):
@@ -368,10 +348,12 @@ def validate_lazy_records(root: Path) -> list[str]:
 def validate_v2(root: Path) -> list[str]:
     research=root/"research"; plan_path,status_path=research/PLAN_NAME,research/STATUS_NAME
     try:
+        workspace_io.ensure_within(root, plan_path)
+        workspace_io.ensure_within(root, status_path)
         plan_text = plan_path.read_text(encoding="utf-8")
         status_text = status_path.read_text(encoding="utf-8")
         errors = validate_v2_content(plan_text, status_text)
-    except (OSError, UnicodeError) as exc:
+    except (OSError, UnicodeError, workspace_io.WorkspaceIOError) as exc:
         return [str(exc)]
     try:
         plan_meta, _ = metadata(plan_text)
@@ -427,9 +409,10 @@ def emit(args, layout, status, messages, actions=None):
     actions=actions or []; payload={"layout":layout,"status":status,"messages":messages,"created":[x for x in actions if x.startswith("create ")],"skipped":[x for x in actions if x.startswith("skip ")],"overwritten":[x for x in actions if x.startswith("overwrite ")]}; payload["counts"]={k:len(payload[k]) for k in ("created","skipped","overwritten")}
     print(json.dumps(payload,ensure_ascii=False,sort_keys=True) if args.json else f"layout: {layout}\nstatus: {status}\n"+"\n".join("- "+x for x in messages+actions))
 
-def main(argv=None):
+def _run(args, root, allow_create=True):
     try:
-        args=parse_args(argv); root=args.workspace_root.resolve()
+        if workspace_io.pending_transaction(root):
+            raise workspace_io.PendingTransactionError("unfinished workspace transaction; use explicit recover before reading or writing core records")
         if args.project_slug: print("warning: --project-slug is deprecated and ignored",file=sys.stderr)
         layout,messages=classify_layout(root)
         if args.validate_only:
@@ -446,14 +429,8 @@ def main(argv=None):
                 emit(args, layout, "refused", lazy_errors)
                 return 1
         if layout=="v2" and validate_v2(root): emit(args,layout,"refused",["existing v2 workspace is invalid; refusing writes"]); return 1
-        if args.force_overwrite and layout!="v2": emit(args,layout,"refused",["--force-overwrite is only valid for an existing valid v2 workspace"]); return 1
         revision = 1
-        preserved_must_read = None
-        if layout == "v2" and args.force_overwrite:
-            current, _ = metadata((root / "research" / PLAN_NAME).read_text(encoding="utf-8"))
-            revision = int(current["plan_revision"]) + 1
-            preserved_must_read = read_preserved_must_read(root, current["language"])
-        p=load_plan(args.plan_file); files={root/"research"/PLAN_NAME:render_plan(p,args.language,args.date,revision),root/"research"/STATUS_NAME:render_status(p,args.language,args.date,revision,preserved_must_read)}; actions=[]
+        p=load_plan(args.plan_file); files={root/"research"/PLAN_NAME:render_plan(p,args.language,args.date,revision),root/"research"/STATUS_NAME:render_status(p,args.language,args.date,revision)}; actions=[]
         try:
             for content in files.values():
                 content.encode("utf-8")
@@ -465,14 +442,39 @@ def main(argv=None):
         if rendered_errors:
             raise ContractError("generated workspace violates contract: " + "; ".join(rendered_errors))
         for path in files:
-            action="overwrite" if path.exists() and args.force_overwrite else "skip" if path.exists() else "create"
+            action="skip" if path.exists() else "create"
             actions.append(f"{action} {path.relative_to(root)}")
         if not args.dry_run and not all(action.startswith("skip ") for action in actions):
-            commit_core_files(files, args.force_overwrite)
+            if not allow_create:
+                raise ContractError("workspace changed during read-only inspection; retry initialization")
+            expected = {path: workspace_io.hash_file(path) for path in files}
+            def validate_written():
+                errors = validate_v2(root)
+                if errors:
+                    raise ContractError("written workspace violates contract: " + "; ".join(errors))
+            workspace_io.commit_files(root, files, expected, validate_written)
         status = "dry-run" if args.dry_run else "unchanged" if all(action.startswith("skip ") for action in actions) else "initialized"
         emit(args,layout,status,[],actions); return 0
-    except (ContractError, OSError) as exc:
+    except (ContractError, OSError, workspace_io.WorkspaceIOError) as exc:
         try: emit(args, layout if "layout" in locals() else "invalid", "invalid", [str(exc)])
         except UnboundLocalError: print(f"error: {exc}",file=sys.stderr)
         return 1
+def main(argv=None):
+    args = parse_args(argv)
+    root = args.workspace_root.resolve()
+    try:
+        layout, _ = classify_layout(root)
+        if args.force_overwrite:
+            emit(args, layout, "refused", ["--force-overwrite is disabled: existing v2 progress must not be reset. Preview project_state.py enable-tracking, explicitly apply migration when authorized, then use project_state.py refreeze."])
+            return 1
+        # Existing/unsupported workspaces, inspection and dry runs are strictly
+        # read-only here: do not even introduce a lock file into an old project.
+        read_only = args.validate_only or args.dry_run or layout in ("v1", "mixed", "invalid", "v2") or (layout == "unknown" and not args.adopt_existing_research_dir)
+        guard = nullcontext() if read_only else workspace_io.WorkspaceLock(root)
+        with guard:
+            return _run(args, root, allow_create=not read_only)
+    except (workspace_io.WorkspaceIOError, OSError) as exc:
+        emit(args, "invalid", "invalid", [str(exc)])
+        return 1
+
 if __name__=="__main__": raise SystemExit(main())

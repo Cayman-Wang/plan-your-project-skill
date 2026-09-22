@@ -1,66 +1,103 @@
 # Plan Your Project
 
-`plan-your-project` is a Codex skill for planning and maintaining software or research projects with explicit tradeoffs, milestones, and durable handoffs.
+Plan software or research work, then preserve a small, evidence-backed execution snapshot that another AI or conversation can resume.
 
-`plan-your-project` 是一个 Codex Skill，用于规划和维护需要明确方案取舍、里程碑和长期交接的软件或科研项目。
+用于软件或科研项目的方案讨论、冻结与进展接续。规划决定“做什么、如何验收”；执行者按关键事件记录“实际做到哪里”。本版本使用 `plan-your-project/v2.1` 工作区格式。
 
-## Workflow / 工作流
+## 工作方式
 
-- **DISCUSS**: explore the goal, evidence, constraints, alternatives, risks, and milestone boundaries. No workspace files are written.
-- **FREEZE**: turn the agreed direction into a concise, reviewable plan. No workspace files are written.
-- **GENERATE**: create the durable planning baseline only after explicit user authorization.
-- **MAINTAIN**: only after an explicit request, update status or create the requested decision, review, retrospective, or handoff record. A revised plan returns to DISCUSS and FREEZE before a separately authorized write.
+- **DISCUSS / FREEZE**：先查已有材料，再问影响目标、范围和验收的决定。简单路线可用轻量视图，正式冻结仍覆盖全部语义；共同验收的多个模块不机械拆成独立项目。
+- **GENERATE**：在已授权保存方案时建立最小工作区。批准方向本身不等于落盘，但“同意方案并生成文件”无需再确认一次。
+- **RESUME**：读取项目状态、冻结计划和必要证据，再核对现场；只读查询不修改文件。
+- **MAINTAIN**：项目启用一次 tracking 后，已授权执行在交付、验证、重要阻塞及暂停/交接等事件后保存检查点，不反复索取记录许可。
 
-正式的状态、授权和维护行为以 [SKILL.md](SKILL.md) 为准；生成文件、输入与校验契约以 [references/file_contract_zh.md](references/file_contract_zh.md) 为准。
+规划不会自行启动开发。用户已要求实施时，转入适用实现 skill 或通用实施工作流；没有专用实现 skill 不构成停止工作的理由，仍遵守宿主运行模式和授权范围。
 
-## Workspace / 工作区
-
-The default baseline contains only two files:
+## 最小文件与跨 AI 入口
 
 ```text
 research/
-├── PLAN.md      # frozen goal, decisions, milestones, and acceptance criteria
-└── STATUS.md    # current milestone, next action, blockers, and required reading
+├── PLAN.md      # 冻结目标、方案、约束、里程碑及验收
+└── STATUS.md    # 当前进展、验证、阻塞、下一步和必要证据
 ```
 
-For an existing v2 workspace, start with `STATUS.md`, then read every path in `must_read`. Additional records are created only when explicitly requested under `research/records/{decisions,reviews,retrospectives,handoffs}`. No empty record directories, indexes, or placeholders are created.
+STATUS 是接续入口；旧历史和详细产物不全塞入它。`init` 只生成上述两份记录；若需要其他 AI 自动发现接续入口，还需运行 `enable-tracking` 预览并应用项目规则合并。需要追溯时按需创建决策、评审、复盘或交接记录；日志、截图、数据等仍存放在项目正常位置。执行、验证与验收分别记录，实验结束不代表研究结论成立。
 
-Runtime outputs belong in the project's normal output locations, not in `research`. 运行产物应留在项目的常规输出目录，而不是 `research/`。
+启用 tracking 可将短协议块幂等合并到项目 `AGENTS.md`，保留已有规则；可选 `CLAUDE.md` 的 `@AGENTS.md` 桥接不维护重复协议。其他 AI 无需安装本 skill，也可读取项目入口并按已有格式维护进度。网页端没有写权限时提供“待同步”交接，本地执行者核实后再保存；不能冒称文件已更新。
 
-v2 工作区从 `STATUS.md` 开始；再读取 `must_read` 中列出的所有路径。决策、评审、复盘和交接记录只在明确请求时按需创建；不会预建空目录、索引或占位文件。
+共享 STATUS 由一个协调负责人维护，子代理汇报证据；状态写入检查已读取的 PLAN/STATUS 校验值，检测并发变化后先重新核对，不静默覆盖。协议提高记录可靠性，不保证所有宿主自动触发，也不能保证异常退出前保存。
 
-## Install / 安装
+## 使用示例
+
+```text
+$plan-your-project 帮我规划这个项目，先讨论，不创建文件。
+按刚确认的方案生成计划文件，并启用开发过程的关键事件进度记录。
+读取这个项目的状态，告诉我实际做到哪里；先不要修改。
+继续当前已授权任务，并在关键事件后更新进度。
+我要换一个 AI 接着做，请生成交接。
+```
+
+新 AI 从项目 `AGENTS.md` 指向的 STATUS 开始，核对 PLAN、相关证据和当前工作区。旧 handoff 是带基线的历史记录，不能倒退覆盖较新的进展。计划修订保留无关完成项及有效证据，仅重开受影响的工作。
+
+## CLI
+
+在本 skill 目录调用 `scripts/project_state.py`。所有项目路径指向用户明确选择的工作区；以下 `/path/to/project` 是说明用路径，替换后再运行。
 
 ```bash
-mkdir -p ~/.codex/skills
-git clone https://github.com/Cayman-Wang/plan-your-project-skill.git \
-  ~/.codex/skills/plan-your-project
+# 查看具体子命令参数
+python scripts/project_state.py --help
+python scripts/project_state.py checkpoint --help
+
+# 新建 v2.1；frozen-plan.json 使用文件契约规定的 schema_version 2.0 输入
+python scripts/project_state.py init \
+  --workspace-root /path/to/project --plan-file frozen-plan.json
+
+# 只读恢复、校验；resume 输出完整状态及 PLAN / STATUS 校验值
+python scripts/project_state.py resume --workspace-root /path/to/project
+python scripts/project_state.py validate --workspace-root /path/to/project
 ```
 
-The default branch installs from `main`. It includes the v2 planning workflow and the v2.2 discussion enhancements: boundary-aware discovery, decision-uncertainty prioritization, discoverable-fact routing, and sharper software and research lenses.
-
-Algorithm projects can also use a user-specified local paper directory for selective, evidence-aware planning.
-
-安装后重启或新建 Codex 任务，再使用 `$plan-your-project` 开始项目规划。
-
-## CLI / 命令行
-
-The v2 initializer requires a workspace root and a frozen plan payload:
+已启用 tracking 的检查点输入为 JSON：`id`（小写连字符标识）、`date`（YYYY-MM-DD）、`summary`（单行事件摘要）、`changes`（实际变化字符串数组）、`status`（完整状态对象）。以 resume 返回的完整状态为基础，只调整有证据支持的内容；字段和证据格式见 [文件契约](references/file_contract_zh.md)。提交前提供该次读取的两个校验值：
 
 ```bash
-python scripts/init_research_workspace.py \
-  --workspace-root <dir> \
-  --plan-file <FILE|->
+python scripts/project_state.py checkpoint \
+  --workspace-root /path/to/project --update-file checkpoint.json \
+  --expected-plan-hash PLAN_HASH --expected-status-hash STATUS_HASH
+
+# 默认仅输出交接；只有明确指定 --output 才写出文件
+python scripts/project_state.py handoff --workspace-root /path/to/project
 ```
 
-`--plan-file` is the validated frozen payload; use `-` to read it from standard input. Re-running against an existing v2 workspace is unchanged unless an authorized re-freeze uses `--force-overwrite`; re-freeze resets STATUS progress while retaining valid `must_read` entries and unrelated files or records. Use `--help` for other options, including `--validate-only` and `--dry-run`; see the [file contract](references/file_contract_zh.md) for the payload schema, validation rules, and workspace behavior.
+| 命令 | 用途与边界 |
+|---|---|
+| `init --plan-file` | 使用已确认的冻结数据新建 v2.1 工作区。 |
+| `resume` / `validate` | 只读恢复或校验；旧 v2 可只读查看，不静默转换。 |
+| `checkpoint --update-file --expected-plan-hash --expected-status-hash` | 保存真实进展；不改冻结目标，不把状态当授权。 |
+| `refreeze --plan-file --affected-milestone --id --summary --expected-plan-hash --expected-status-hash` | 保存已确认的新计划修订，显式标出受影响里程碑，保留其余进度。 |
+| `handoff` / `handoff --output` | 输出交接；`--output` 仅接受工作区相对的新 Markdown 文件路径，不覆盖已有文件。 |
+| `enable-tracking` | 默认预览格式转换和入口合并；旧 v2 需提供经核实的 `--status-file`。 |
+| `enable-tracking --apply --expected-plan-hash --expected-status-hash` | 应用已确认的启用方案；`--claude-bridge` 可选。 |
+| `recover` | 显式执行中断事务恢复，可能写入文件；不是只读检查。先查看 resume/validate 的错误，不盲目修复。 |
 
-## v2.0.0 Breaking Changes / 破坏性变更
+`PLAN_HASH`、`STATUS_HASH` 应分别使用 resume 的 `hashes.plan`、`hashes.status` 实测值，不填固定示例值。实际写入必须提供它们；重复提交相同检查点 ID/内容会无操作返回，复用 ID 改内容会报错。校验失败时先核对报告，不用强制覆盖掩盖冲突。校验器检查结构与必要条件，不代替实际测试、实验和验收判断。所有参数细节以各子命令 `--help` 和 [file_contract_zh.md](references/file_contract_zh.md) 为准。
 
-- The default contract is `research/PLAN.md` and `research/STATUS.md`, replacing the v1 fixed multi-directory layout.
-- Planning records are lazy rather than scaffolded as a required file set.
-- v1 workspaces remain readable. v2 does not promise automatic migration or rewrite existing v1 workspaces.
-- `scripts/bootstrap_research_workspace.py` is deprecated compatibility support. Use `scripts/init_research_workspace.py` with `--workspace-root` and `--plan-file` for v2.
+## 兼容与启用
+
+旧 `plan-your-project/v2` 保持只读恢复；只有明确启用 tracking 时，经 preview / apply 和经核实的状态输入转换。v1、混合或不完整布局先报告问题，不自动迁移。启用预览应展示准确路径和内容；应用时保留用户已有入口文字，重复启用不叠加协议或 Claude import。
+
+`scripts/init_research_workspace.py` 保留旧格式兼容；新建 v2.1 使用 `project_state.py init`。`bootstrap_research_workspace.py` 是 deprecated 兼容入口，不用于新工作区。工作区格式版本不等于上游发布标签；本地修改不会自动发布到源仓库。
+
+## 文档
+
+- [SKILL.md](SKILL.md)：触发、状态和操作边界。
+- [讨论协议](references/discussion_protocol_zh.md)：轻量呈现、冻结和共同验收。
+- [进展协议](references/progress_protocol_zh.md)：检查点、证据、冷启动、并发与网页交接。
+- [文件契约](references/file_contract_zh.md)：精确输入格式与校验。
+- [AGENTS 模板](assets/AGENTS_tracking.md) / [Claude 桥接](assets/CLAUDE_bridge.md)：项目入口资源。
+
+## 安装
+
+源仓库为 `https://github.com/Cayman-Wang/plan-your-project-skill`。安装已审阅的版本到宿主的 skills 目录；更新已有安装时先备份，不将本地修改覆盖掉。项目中的 AGENTS 入口是接续协议的共享载体，不要求所有 AI 都具备同一 skill 安装位置。未安装 CLI 的代理可遵守项目模板手工维护 STATUS；它不能因此宣称执行了自动校验或创建了机器可验证的检查点。
 
 ## License
 

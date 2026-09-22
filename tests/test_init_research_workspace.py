@@ -123,24 +123,29 @@ class InitResearchWorkspaceTests(unittest.TestCase):
             plan_path.write_text(plan_path.read_text(encoding="utf-8").replace("frozen_at: 2026-08-11", "frozen_at: 20260811"), encoding="utf-8")
             self.assertNotEqual(self.run_cli(root, "--validate-only").returncode, 0)
 
-    def test_idempotency_and_force(self):
+    def test_idempotency_and_force_refusal_preserve_existing_workspace(self):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw); source = self.write_plan(root)
             self.assertEqual(self.run_cli(root, "--plan-file", str(source)).returncode, 0)
-            original = (root / "research" / "PLAN.md").read_text(encoding="utf-8")
+            # Represent an older workspace that predates the new I/O lock file.
+            (root / ".plan-your-project.lock").unlink()
             source.write_text(json.dumps(plan(goal="changed")), encoding="utf-8")
+            before = {str(p.relative_to(root)): p.read_bytes() for p in root.rglob("*") if p.is_file()}
             unchanged = self.run_cli(root, "--plan-file", str(source), "--json")
             self.assertEqual(unchanged.returncode, 0)
             self.assertEqual(json.loads(unchanged.stdout)["status"], "unchanged")
             self.assertEqual(json.loads(unchanged.stdout)["counts"]["skipped"], 2)
-            self.assertEqual(original, (root / "research" / "PLAN.md").read_text(encoding="utf-8"))
             dry_run = self.run_cli(root, "--plan-file", str(source), "--dry-run", "--json")
             self.assertEqual(json.loads(dry_run.stdout)["status"], "dry-run")
-            self.assertEqual(self.run_cli(root, "--plan-file", str(source), "--force-overwrite").returncode, 0)
-            current = (root / "research" / "PLAN.md").read_text(encoding="utf-8")
-            self.assertIn("changed", current)
-            self.assertIn("plan_revision: 2", current)
+            refused = self.run_cli(root, "--plan-file", str(source), "--force-overwrite", "--json")
+            self.assertNotEqual(refused.returncode, 0)
+            payload = json.loads(refused.stdout)
+            self.assertEqual(payload["status"], "refused")
+            self.assertIn("enable-tracking", " ".join(payload["messages"]))
+            self.assertIn("refreeze", " ".join(payload["messages"]))
             self.assertEqual(self.run_cli(root, "--validate-only").returncode, 0)
+            after = {str(p.relative_to(root)): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+            self.assertEqual(before, after)
 
     def test_initial_commit_failure_leaves_no_core_files_or_temps(self):
         with tempfile.TemporaryDirectory() as raw:
@@ -226,12 +231,22 @@ class InitResearchWorkspaceTests(unittest.TestCase):
             self.assertNotEqual(self.run_cli(root, "--plan-file", str(source)).returncode, 0)
             self.assertFalse((research / "STATUS.md").exists())
 
-    def test_force_requires_existing_v2_and_bootstrap_warns(self):
+    def test_force_is_disabled_without_writes_and_bootstrap_initialization_warns(self):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw); source = self.write_plan(root)
-            self.assertNotEqual(self.run_cli(root, "--plan-file", str(source), "--force-overwrite").returncode, 0)
+            before = source.read_bytes()
+            result = self.run_cli(root, "--plan-file", str(source), "--force-overwrite", "--json")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(json.loads(result.stdout)["status"], "refused")
+            self.assertEqual(list(root.iterdir()), [source])
+            self.assertEqual(source.read_bytes(), before)
             result = subprocess.run([sys.executable, str(BOOTSTRAP), "--workspace-root", str(root), "--plan-file", str(source)], text=True, capture_output=True)
             self.assertEqual(result.returncode, 0); self.assertIn("deprecated", result.stderr)
+            core = {p: p.read_bytes() for p in (root / "research").iterdir()}
+            result = subprocess.run([sys.executable, str(BOOTSTRAP), "--workspace-root", str(root), "--plan-file", str(source), "--force-overwrite"], text=True, capture_output=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("disabled", result.stdout)
+            self.assertEqual(core, {p: p.read_bytes() for p in (root / "research").iterdir()})
 
     def test_invalid_layout_and_malformed_v2_are_read_only(self):
         with tempfile.TemporaryDirectory() as raw:
@@ -396,30 +411,28 @@ class InitResearchWorkspaceTests(unittest.TestCase):
             self.assertEqual(self.run_cli(root, "--plan-file", str(source), "--adopt-existing-research-dir").returncode, 0)
             self.assertEqual(self.run_cli(root, "--validate-only").returncode, 0)
 
-    def test_refreeze_resets_status_and_preserves_context_and_unrelated_records(self):
+    def test_legacy_force_refusal_preserves_progress_blockers_and_history(self):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw); source = self.write_plan(root)
             self.assertEqual(self.run_cli(root, "--plan-file", str(source)).returncode, 0)
             research = root / "research"; status = research / "STATUS.md"
             status_text = status.read_text(encoding="utf-8")
-            status_text = status_text.replace("state: planned", "state: complete")
+            status_text = status_text.replace("state: planned", "state: blocked")
             status_text = status_text.replace("## 阻塞\n- 无", "## 阻塞\nWaiting for review\nOwner: team")
             status_text = status_text.replace("## 必读\n- research/PLAN.md", "## 必读\n- research/PLAN.md\n- research/NOTES.md")
             status.write_text(status_text, encoding="utf-8")
             notes = research / "NOTES.md"; notes.write_text("unchanged", encoding="utf-8")
             record = research / "records" / "decisions" / "2026-08-11-record.md"; record.parent.mkdir(parents=True); record.write_text("record", encoding="utf-8")
-            replacement = plan(
-                milestones=[{"id": "M2", "outcome": "Release", "acceptance": ["Published"]}],
-                next_action="Release",
-            )
-            source.write_text(json.dumps(replacement), encoding="utf-8")
-            self.assertEqual(self.run_cli(root, "--plan-file", str(source), "--force-overwrite").returncode, 0)
-            updated = status.read_text(encoding="utf-8")
-            self.assertIn("state: planned", updated); self.assertIn("current_milestone: M2", updated)
-            self.assertIn("## 阻塞\n- 无", updated); self.assertNotIn("Waiting for review", updated)
-            self.assertIn("research/NOTES.md", updated); self.assertIn("Release", updated)
-            self.assertEqual(notes.read_text(encoding="utf-8"), "unchanged"); self.assertEqual(record.read_text(encoding="utf-8"), "record")
+            source.write_text(json.dumps(plan(milestones=[{"id": "M2", "outcome": "Release", "acceptance": ["Published"]}], next_action="Release")), encoding="utf-8")
+            before = {str(p.relative_to(root)): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+            result = self.run_cli(root, "--plan-file", str(source), "--force-overwrite", "--json")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(json.loads(result.stdout)["status"], "refused")
+            self.assertIn("state: blocked", status.read_text(encoding="utf-8"))
+            self.assertIn("current_milestone: M1", status.read_text(encoding="utf-8"))
+            self.assertIn("Waiting for review", status.read_text(encoding="utf-8"))
             self.assertEqual(self.run_cli(root, "--validate-only").returncode, 0)
+            self.assertEqual(before, {str(p.relative_to(root)): p.read_bytes() for p in root.rglob("*") if p.is_file()})
 
     def test_legacy_validation_and_v2_metadata_consistency(self):
         with tempfile.TemporaryDirectory() as raw:
@@ -442,14 +455,19 @@ class InitResearchWorkspaceTests(unittest.TestCase):
             status.write_text(status.read_text(encoding="utf-8").replace("current_milestone: M1", "current_milestone: M9"), encoding="utf-8")
             self.assertNotEqual(self.run_cli(root, "--validate-only").returncode, 0)
 
-    def test_force_invalid_payload_reports_existing_v2_layout(self):
+    def test_force_invalid_payload_is_refused_before_any_existing_v2_write(self):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw); source = self.write_plan(root)
             self.assertEqual(self.run_cli(root, "--plan-file", str(source)).returncode, 0)
             source.write_text('{"broken": true}', encoding="utf-8")
+            before = {str(p.relative_to(root)): p.read_bytes() for p in root.rglob("*") if p.is_file()}
             result = self.run_cli(root, "--plan-file", str(source), "--force-overwrite", "--json")
             self.assertNotEqual(result.returncode, 0)
-            self.assertEqual(json.loads(result.stdout)["layout"], "v2")
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["layout"], "v2")
+            self.assertEqual(payload["status"], "refused")
+            self.assertEqual(payload["counts"], {"created": 0, "skipped": 0, "overwritten": 0})
+            self.assertEqual(before, {str(p.relative_to(root)): p.read_bytes() for p in root.rglob("*") if p.is_file()})
 
     def test_cross_validation_uses_milestone_section_and_exact_must_read_line(self):
         with tempfile.TemporaryDirectory() as raw:

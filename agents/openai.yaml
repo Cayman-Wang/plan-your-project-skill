@@ -1,4 +1,4 @@
 interface:
   display_name: "Plan Your Project"
-  short_description: "Plan software and research projects through milestones"
-  default_prompt: "Use $plan-your-project to plan a software or research project with durable milestones and handoffs."
+  short_description: "Plan projects and preserve evidence-backed progress"
+  default_prompt: "Use $plan-your-project to plan a software or research project, or resume its recorded state and maintain checkpoints during authorized work."
