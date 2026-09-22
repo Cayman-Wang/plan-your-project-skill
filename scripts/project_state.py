@@ -78,6 +78,22 @@ def safe_relative(root, value, exists=True):
     return result
 
 
+def reference_path(root, value, required=True):
+    """Validate reference boundaries without opening stale or special files."""
+    text(value, "relative path")
+    require(not Path(value).is_absolute() and "\\" not in value and ":" not in value and all(x not in ("", ".", "..") for x in value.split("/")), f"invalid workspace-relative path: {value}")
+    candidate = root / value
+    try:
+        resolved = candidate.resolve()
+        require(resolved.is_relative_to(root.resolve()), f"reference escapes workspace: {value}")
+    except (OSError, RuntimeError) as exc:
+        raise Error(f"reference cannot be resolved: {value}") from exc
+    if required:
+        io.ensure_within(root, candidate)
+        require(candidate.is_file(), f"missing referenced file: {value}")
+    return candidate
+
+
 def sections(body, headings):
     require(re.findall(r"(?m)^## (.+)$", body) == list(headings), "missing, duplicated or reordered sections")
     return {h: legacy.section_body(body, h) for h in headings}
@@ -89,6 +105,13 @@ def parse_list(raw):
     rows = raw.splitlines()
     require(all(x.startswith("- ") and len(x) > 2 for x in rows), "invalid list section")
     return [x[2:] for x in rows]
+
+
+def legacy_references(body, language):
+    heading = "必读" if language == "zh" else "Must Read"
+    rows = [line for line in (legacy.section_body(body, heading) or "").splitlines() if line.strip()]
+    require(all(re.fullmatch(r"- (\S(?:.*\S)?)", line) for line in rows), "STATUS must_read entries must be non-empty list items")
+    return [line[2:] for line in rows]
 
 
 def render_records(records, keys):
@@ -156,7 +179,7 @@ def validate_state(state, entries, root, check_refs=True):
         strings(state[key], key, key in ("must_read", "authorization"))
     require(len(state["must_read"]) == len(set(state["must_read"])) and "research/PLAN.md" in state["must_read"], "must_read must uniquely include research/PLAN.md")
     for value in state["must_read"]:
-        safe_relative(root, value, exists=check_refs)
+        reference_path(root, value, required=check_refs)
     evidence = {}
     for section, keys in (("milestones", MILESTONE_KEYS), ("running_tasks", TASK_KEYS), ("evidence", EVIDENCE_KEYS)):
         require(isinstance(state[section], list), f"{section} must be a list")
@@ -175,7 +198,7 @@ def validate_state(state, entries, root, check_refs=True):
         # External references are descriptions, never commands or implicit network access.
         external = re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", item["ref"]) or Path(item["ref"]).is_absolute()
         if not external:
-            safe_relative(root, item["ref"], exists=check_refs and item["source"] != "unverified")
+            reference_path(root, item["ref"], required=check_refs and item["source"] != "unverified")
         evidence[item["id"]] = item
     require({m["id"] for m in state["milestones"]} == set(entries), "STATUS milestones must exactly match PLAN IDs")
     for milestone in state["milestones"]:
@@ -272,14 +295,21 @@ def read_workspace(root, allow_pending=False, check_refs=True):
     require(layout == "v2", f"{layout} layout is read-only or unavailable: {'; '.join(messages)}")
     pp, sp = paths(root)
     before = {"plan": io.hash_file(pp), "status": io.hash_file(sp)}
-    plan_raw, status_raw = pp.read_text(encoding="utf-8"), sp.read_text(encoding="utf-8")
+    plan_bytes, status_bytes = pp.read_bytes(), sp.read_bytes()
+    consumed = {"plan": hashlib.sha256(plan_bytes).hexdigest(), "status": hashlib.sha256(status_bytes).hexdigest()}
+    # Parsing retains universal-newline behavior; concurrency hashes cover the
+    # actual bytes consumed, including CRLF, rather than re-encoded parsed text.
+    plan_raw, status_raw = (raw.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n") for raw in (plan_bytes, status_bytes))
     pm, body, entries = read_plan(plan_raw)
     if pm["workspace_format"] == "plan-your-project/v2":
-        errors = legacy.validate_v2(root)
-        if not check_refs:
-            errors = [error for error in errors if "STATUS must_read path is not an existing file:" not in error]
+        errors = legacy.validate_v2_content(plan_raw, status_raw)
         require(not errors, "; ".join(errors))
         sm, st = legacy.metadata(status_raw)
+        for value in legacy_references(st, pm["language"]):
+            reference_path(root, value, required=check_refs)
+        record_files(root)
+        errors = legacy.validate_lazy_records(root)
+        require(not errors, "; ".join(errors))
         state = None
     else:
         sm, state = parse_status(status_raw)
@@ -288,7 +318,7 @@ def read_workspace(root, allow_pending=False, check_refs=True):
         records = checkpoint_metadata(root)
         require(all(int(m[0]["plan_revision"]) <= int(pm["plan_revision"]) and int(m[0]["status_revision"]) <= int(sm["status_revision"]) for m in records.values()), "checkpoint is newer than current state")
     after = {"plan": io.hash_file(pp), "status": io.hash_file(sp)}
-    require(before == after and (allow_pending or not io.pending_transaction(root)), "state changed during read; retry resume")
+    require(before == consumed == after and (allow_pending or not io.pending_transaction(root)), "state changed during read; retry resume")
     return {"format": pm["workspace_format"], "project_name": re.search(r"(?m)^# (.+)$", body).group(1), "plan_revision": int(pm["plan_revision"]), "status_revision": int(sm.get("status_revision", "0")), "hashes": after, "status": state, "plan_metadata": pm, "status_metadata": sm, "plan_body": body, "milestone_entries": entries, "plan_text": plan_raw, "status_text": status_raw}
 
 
@@ -307,9 +337,9 @@ def commit(root, files, expected):
     io.commit_files(root, files, expected, lambda: read_workspace(root, allow_pending=True))
 
 
-def record_text(kind, request, snapshot, plan_revision, status_revision, changes, state):
+def record_text(kind, request, snapshot, plan_revision, status_revision, changes, state, evidence_ids=()):
     previous = {e["id"]: e for e in (snapshot.get("status") or {}).get("evidence", [])}
-    evidence = [f"{e['id']} [{e['source']}] {e['ref']} | code={e['code_ref']} | checked={e['checked_at']}" for e in state["evidence"] if previous.get(e["id"]) != e]
+    evidence = [f"{e['id']} [{e['source']}] {e['ref']} | code={e['code_ref']} | checked={e['checked_at']}" for e in state["evidence"] if previous.get(e["id"]) != e or e["id"] in evidence_ids]
     return "\n".join(["---", f"workspace_format: {FORMAT}", "record: CHECKPOINT", f"kind: {kind}", f"id: {request['id']}", f"date: {request['date']}", f"plan_revision: {plan_revision}", f"status_revision: {status_revision}", f"source_plan_hash: {snapshot['hashes']['plan']}", f"source_status_hash: {snapshot['hashes']['status']}", f"request_hash: {digest(request)}", "---", "", "# " + request["summary"], "", "## Changes", legacy.bullets(changes), "", "## Evidence", legacy.bullets(evidence, "(none)"), "", "本记录仅适用于上述计划修订与截止日期；较新 STATUS 和用户决定优先。", ""])
 
 
@@ -356,6 +386,9 @@ def refreeze(root, args):
     snapshot = read_workspace(root)
     require_new(snapshot)
     request = {"id": args.id, "date": args.date, "summary": args.summary, "plan": plan, "affected": sorted(set(args.affected_milestone or []))}
+    if args.next_action is not None:
+        text(args.next_action, "next_action")
+        request["next_action"] = args.next_action
     check_request(request)
     if duplicate(root, request):
         return {"result": "unchanged", "id": request["id"]}
@@ -381,22 +414,27 @@ def refreeze(root, args):
         state["milestones"].append(milestone)
     state["summary"] = args.summary
     next_heading = "下一步" if language == "zh" else "Next Action"
-    if plan["next_action"] != legacy.section_body(snapshot["plan_body"], next_heading):
-        state["next_action"] = plan["next_action"]
+    plan_action_changed = plan["next_action"] != legacy.section_body(snapshot["plan_body"], next_heading)
+    replacement_action = args.next_action if args.next_action is not None else plan["next_action"] if plan_action_changed else None
     current = next((m for m in state["milestones"] if m["id"] == state["current_milestone"]), None)
     if current is None or (current["acceptance"] == "accepted" and any(m["acceptance"] != "accepted" for m in state["milestones"])):
+        require(replacement_action is not None, "current milestone changed; supply --next-action or an updated PLAN next_action")
         state["current_milestone"] = next((m["id"] for m in state["milestones"] if m["acceptance"] != "accepted"), next(iter(entries)))
+    if replacement_action is not None:
+        state["next_action"] = replacement_action
     if affected and state["state"] == "complete":
         state["state"] = "in_progress"
     validate_state(state, entries, root)
     changes = [args.summary, "Affected/revalidate: " + (", ".join(sorted(affected)) or "none"), "Removed (historical results retained here): " + (", ".join(sorted(set(old) - set(entries))) or "none")]
+    archived_evidence = set()
     for milestone in snapshot["status"]["milestones"]:
         if milestone["id"] in affected or milestone["id"] not in entries:
-            changes.append(f"Previous {milestone['id']}: {milestone['execution']}/{milestone['validation']}/{milestone['acceptance']}; {milestone['summary']}; evidence={','.join(milestone['evidence'])}; basis={milestone['acceptance_basis']}")
+            changes.append(f"Previous {milestone['id']}: {milestone['execution']}/{milestone['validation']}/{milestone['acceptance']}; conclusion={milestone['conclusion']}; {milestone['summary']}; evidence={','.join(milestone['evidence'])}; basis={milestone['acceptance_basis']}")
+            archived_evidence.update(milestone["evidence"])
     pp, sp = paths(root)
     sr = snapshot["status_revision"] + 1
     cp = root / f"research/records/checkpoints/{args.date}-{args.id}.md"
-    commit(root, {pp: rendered, sp: render_status(state, revision, sr, args.date), cp: record_text("refreeze", request, snapshot, revision, sr, changes, state)}, current_expected(root, args))
+    commit(root, {pp: rendered, sp: render_status(state, revision, sr, args.date), cp: record_text("refreeze", request, snapshot, revision, sr, changes, state, archived_evidence)}, current_expected(root, args))
     return {"result": "refrozen", "plan_revision": revision, "status_revision": sr, "affected": sorted(affected)}
 
 
@@ -419,17 +457,33 @@ def resume(root):
     if layout in ("v1", "mixed"):
         return {"result": "legacy_read_only", "format": layout, "warnings": messages + ["Do not migrate or update v1/mixed layouts with this tool."], "git": git_facts(root)}
     snapshot = read_workspace(root, check_refs=False)
+    return resume_snapshot(root, snapshot)
+
+
+def reference_warnings(root, snapshot):
+    state = snapshot["status"]
+    if state:
+        local_refs = state["must_read"] + [e["ref"] for e in state["evidence"] if not re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", e["ref"]) and not Path(e["ref"]).is_absolute()]
+    else:
+        _, body = legacy.metadata(snapshot["status_text"])
+        local_refs = legacy_references(body, snapshot["plan_metadata"]["language"])
+    warnings = []
+    for reference in dict.fromkeys(local_refs):
+        candidate = reference_path(root, reference, required=False)
+        if candidate.is_symlink() or not candidate.is_file():
+            warnings.append(f"Missing or non-regular reference: {reference}. Recorded completion is unverified at the current site; investigate and checkpoint the corrected evidence/status before continuing.")
+    return warnings
+
+
+def resume_snapshot(root, snapshot):
+    """Describe the same verified snapshot used by a handoff, without rereading it."""
     warnings = ["Git facts were checked locally; remote processes and remote evidence were not inspected. Historical passes are not current-code passes."]
     if snapshot["format"] != FORMAT:
         warnings.append("Legacy v2 is read-only until explicit enable-tracking migration; per-milestone acceptance is unknown.")
     if len(snapshot["status_text"].splitlines()) > 100:
         warnings.append("STATUS exceeds the ~100-line target; shorten prose/must_read and link history without dropping important facts.")
     state = snapshot["status"]
-    if state:
-        local_refs = state["must_read"] + [e["ref"] for e in state["evidence"] if not re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", e["ref"]) and not Path(e["ref"]).is_absolute()]
-        for reference in dict.fromkeys(local_refs):
-            if not (root / reference).is_file():
-                warnings.append(f"Missing reference: {reference}. Recorded completion is unverified at the current site; investigate and checkpoint the corrected evidence/status before continuing.")
+    warnings.extend(reference_warnings(root, snapshot))
     if state and len(state["must_read"]) > 5:
         warnings.append("Review the must_read list; keep only PLAN and materials needed for the next action.")
     if state and state["running_tasks"]:
@@ -445,11 +499,16 @@ def handoff(root, args):
     snapshot = read_workspace(root, check_refs=False)
     state = snapshot["status"]
     lines = ["# 项目交接摘要：" + snapshot["project_name"], "", f"截止时间：{dt.datetime.now(dt.timezone.utc).isoformat()}", f"源格式：{snapshot['format']}；PLAN 修订 {snapshot['plan_revision']}；STATUS 修订 {snapshot['status_revision']}", f"PLAN SHA-256：{snapshot['hashes']['plan']}", f"STATUS SHA-256：{snapshot['hashes']['status']}", "", "## 接续规则", "先读项目规则与 STATUS，再读 PLAN 和下一动作必要材料；核对分支、HEAD、未提交改动及相关产物/运行状态。历史交接不能覆盖较新用户决定。", "本摘要不授予额外实验、发布或外部操作权限；仅继续已授权工作。未访问的服务器仍为未现场核验，不按旧报告宣布任务结束。", "", "## 目标与冻结边界"]
+    lines.insert(3, f"来源工作区：{root}（跨电脑接续时需映射为目标电脑路径）")
     language = snapshot["plan_metadata"]["language"]
     for heading in (("目标", "选定方案", "成功标准", "范围", "约束", "冻结决策", "里程碑") if language == "zh" else ("Goal", "Selected Approach", "Success Criteria", "Scope", "Constraints", "Locked Decisions", "Milestones")):
-        lines += [f"### {heading}", legacy.section_body(snapshot["plan_body"], heading) or "(none)"]
-    checked = resume(root)
-    lines += ["", "## 当前进展、证据与下一步", snapshot["status_text"].split("\n---\n", 1)[1].strip(), "", "## 现场核验", "```json", json.dumps(checked["git"], ensure_ascii=False, indent=2), "```", "Git 事实为本次读取；远端任务、日志和实验结果未自动核验。", legacy.bullets(checked["warnings"])]
+        content = legacy.section_body(snapshot["plan_body"], heading) or "(none)"
+        lines += [f"### {heading}", re.sub(r"(?m)^(#{3,5}) ", r"#\1 ", content)]
+    checked = resume_snapshot(root, snapshot)
+    _, status_body = legacy.metadata(snapshot["status_text"])
+    status_body = re.sub(r"(?m)^# .+\n?", "", status_body).strip()
+    status_body = re.sub(r"(?m)^(#{2,5}) ", r"#\1 ", status_body)
+    lines += ["", "## 当前进展、证据与下一步", status_body, "", "## 现场核验", "```json", json.dumps(checked["git"], ensure_ascii=False, indent=2), "```", "Git 事实为本次读取；远端任务、日志和实验结果未自动核验。", legacy.bullets(checked["warnings"])]
     # Include bounded excerpts so a file-less recipient can evaluate linked evidence.
     for evidence in (state or {}).get("evidence", []):
         lines += ["", f"### 证据 {evidence['id']} [{evidence['source']}]", evidence["summary"], f"来源：{evidence['ref']}；适用版本：{evidence['code_ref']}；核验时间：{evidence['checked_at']}"]
@@ -473,23 +532,35 @@ def merge_protocol(old, template):
     return old.rstrip() + ("\n\n" if old.strip() else "") + template.rstrip() + "\n"
 
 
-def enable_tracking(root, args):
-    snapshot = read_workspace(root)
-    pp, sp = paths(root)
+def tracking_entries(root, claude_bridge):
+    """Return entry changes and the original bytes used to prepare each change."""
     templates = Path(__file__).resolve().parents[1] / "assets"
-    ap, cp = root / "AGENTS.md", root / "CLAUDE.md"
-    io.ensure_within(root, ap)
-    io.ensure_within(root, cp)
-    old_agents = ap.read_bytes().decode("utf-8") if ap.exists() else ""
-    new_agents = merge_protocol(old_agents, (templates / "AGENTS_tracking.md").read_text(encoding="utf-8"))
-    files = {ap: new_agents} if new_agents != old_agents else {}
-    if args.claude_bridge:
-        old_claude = cp.read_bytes().decode("utf-8") if cp.exists() else ""
-        if not re.search(r"(?m)^@AGENTS\.md\s*$", old_claude):
-            files[cp] = old_claude.rstrip() + ("\n\n" if old_claude.strip() else "") + "@AGENTS.md\n"
+    files, originals, expected = {}, {}, {}
+    for name in ("AGENTS.md", "CLAUDE.md") if claude_bridge else ("AGENTS.md",):
+        path = root / name
+        io.ensure_within(root, path)
+        raw = path.read_bytes() if path.exists() else None
+        old = raw.decode("utf-8") if raw is not None else ""
+        if name == "AGENTS.md":
+            new = merge_protocol(old, (templates / "AGENTS_tracking.md").read_text(encoding="utf-8"))
+        else:
+            new = old if re.search(r"(?m)^@AGENTS\.md\s*$", old) else old.rstrip() + ("\n\n" if old.strip() else "") + "@AGENTS.md\n"
+        if new != old:
+            files[path] = new
+            expected[path] = hashlib.sha256(raw).hexdigest() if raw is not None else None
+            if raw is not None:
+                originals[path] = raw.decode("utf-8")
+    return files, originals, expected
+
+
+def enable_tracking(root, args):
+    snapshot = read_workspace(root, check_refs=False)
+    pp, sp = paths(root)
+    files, entry_originals, entry_expected = tracking_entries(root, args.claude_bridge)
     is_old = snapshot["format"] != FORMAT
     preview = {"result": "preview", "from": snapshot["format"], "to": FORMAT, "hashes": snapshot["hashes"], "changes": [str(p.relative_to(root)) for p in files], "migration_requires_reviewed_status_file": is_old, "notes": ["No files were written. Existing history and rules will be preserved. Explicit --apply authorizes backup and conversion."]}
-    preview["diffs"] = {str(path.relative_to(root)): "".join(difflib.unified_diff((path.read_bytes().decode("utf-8") if path.exists() else "").splitlines(keepends=True), value.splitlines(keepends=True), fromfile=str(path.relative_to(root)), tofile=str(path.relative_to(root)))) for path, value in files.items()}
+    preview["warnings"] = reference_warnings(root, snapshot)
+    preview["diffs"] = {str(path.relative_to(root)): "".join(difflib.unified_diff(entry_originals.get(path, "").splitlines(keepends=True), value.splitlines(keepends=True), fromfile=str(path.relative_to(root)), tofile=str(path.relative_to(root)))) for path, value in files.items()}
     if is_old:
         preview["changes"] += ["research/PLAN.md marker", "research/STATUS.md", "migration checkpoint and backups"]
         preview["legacy_status"] = snapshot["status_text"]
@@ -505,11 +576,11 @@ def enable_tracking(root, args):
         return preview
     if not is_old and not files:
         return {"result": "unchanged", "format": FORMAT}
-    expected = current_expected(root, args)
+    expected = current_expected(root, args) | entry_expected
     # Backups are regular UTF-8 originals inside the workspace, committed with conversion.
     tag = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     backup = root / ".plan-your-project-backups" / tag
-    originals = {p: p.read_bytes().decode("utf-8") for p in (pp, sp, ap, cp) if p.exists()}
+    originals = {p: p.read_bytes().decode("utf-8") for p in (pp, sp)} | entry_originals
     for path, raw in originals.items():
         files[backup / path.relative_to(root)] = raw
     if is_old:
@@ -522,9 +593,6 @@ def enable_tracking(root, args):
         record = root / f"research/records/checkpoints/{args.date}-{request['id']}.md"
         changes = ["Legacy originals preserved at " + str(backup.relative_to(root)), "Migrated using reviewed state; no execution/acceptance inferred automatically."]
         files[record] = record_text("migration", request, snapshot, snapshot["plan_revision"], 1, changes, state)
-    for path in (ap, cp):
-        if path in files:
-            expected[path] = io.hash_file(path)
     commit(root, files, expected)
     return {"result": "enabled", "format": FORMAT, "backup": str(backup)}
 
@@ -536,12 +604,32 @@ def initialize(root, args):
     rendered = legacy.render_plan(plan, args.language, args.date, 1).replace("workspace_format: plan-your-project/v2\n", f"workspace_format: {FORMAT}\n", 1)
     _, _, entries = read_plan(rendered)
     state = initial_state(plan)
+    if args.authorization is not None:
+        strings(args.authorization, "authorization", required=True)
+        state["authorization"] = args.authorization[:]
+    if args.coordinator is not None:
+        text(args.coordinator, "coordinator")
+        state["authorization"].append("Coordinator: " + args.coordinator)
+    require(not args.claude_bridge or args.with_agents, "--claude-bridge requires --with-agents during init")
     validate_state(state, entries, root, check_refs=False)
     pp, sp = paths(root)
+    files = {pp: rendered, sp: render_status(state, 1, 1, args.date)}
+    expected = {pp: None, sp: None}
+    originals = {}
+    if args.with_agents:
+        entry_files, originals, entry_expected = tracking_entries(root, args.claude_bridge)
+        files.update(entry_files)
+        expected.update(entry_expected)
     if args.dry_run:
-        return {"result": "preview", "format": FORMAT, "files": [str(pp), str(sp)]}
-    commit(root, {pp: rendered, sp: render_status(state, 1, 1, args.date)}, {pp: None, sp: None})
-    return {"result": "initialized", "format": FORMAT}
+        diffs = {str(path.relative_to(root)): "".join(difflib.unified_diff(originals.get(path, "").splitlines(keepends=True), value.splitlines(keepends=True), fromfile=str(path.relative_to(root)), tofile=str(path.relative_to(root)))) for path, value in files.items()}
+        return {"result": "preview", "format": FORMAT, "files": [str(path) for path in files], "diffs": diffs, "backups": [str(path.relative_to(root)) for path in originals]}
+    backup = None
+    if originals:
+        tag = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        backup = root / ".plan-your-project-backups" / tag
+        files.update({backup / path.relative_to(root): raw for path, raw in originals.items()})
+    commit(root, files, expected)
+    return {"result": "initialized", "format": FORMAT, "backup": str(backup) if backup else None}
 
 
 def parser():
@@ -558,6 +646,10 @@ def parser():
         if name == "init":
             sub.add_argument("--language", choices=("zh", "en"), default="zh")
             sub.add_argument("--dry-run", action="store_true")
+            sub.add_argument("--authorization", action="append", help="Existing user authorization or restriction; repeat for multiple facts.")
+            sub.add_argument("--coordinator", help="Single coordinating writer, recorded in Authorization.")
+            sub.add_argument("--with-agents", action="store_true", help="Merge the tracking entry in the same initialization transaction.")
+            sub.add_argument("--claude-bridge", action="store_true", help="Add @AGENTS.md; requires --with-agents.")
         if name in ("checkpoint", "refreeze", "enable-tracking"):
             sub.add_argument("--expected-plan-hash")
             sub.add_argument("--expected-status-hash")
@@ -567,6 +659,7 @@ def parser():
             sub.add_argument("--id", required=True)
             sub.add_argument("--summary", required=True)
             sub.add_argument("--affected-milestone", action="append")
+            sub.add_argument("--next-action", help="Explicit current next action; required when reselecting a milestone unless PLAN supplies a changed action.")
         if name == "handoff":
             sub.add_argument("--output", help="Workspace-relative new Markdown file. Omit to print only.")
         if name == "enable-tracking":

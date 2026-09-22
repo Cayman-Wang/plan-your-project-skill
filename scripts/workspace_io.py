@@ -233,7 +233,10 @@ def _recover(root: Path, replace: Callable[[Path, Path], None]) -> bool:
         allowed = {entry["new_hash"]} if manifest["state"] == "committed" else {entry["old_hash"], entry["new_hash"]}
         if actual not in allowed:
             raise ConflictError(f"recovery found an independently changed target; backups retained: {entry['path']}")
-        if manifest["state"] == "prepared" and entry["old_hash"] is not None:
+        # Cleanup can remove backups and then be interrupted after a completed
+        # rollback. Already-original targets need no restore source; requiring
+        # those deleted backups would make a safe cleanup retry impossible.
+        if manifest["state"] == "prepared" and actual != entry["old_hash"] and entry["old_hash"] is not None:
             if hash_file(tx / entry["backup"]) != entry["old_hash"]:
                 raise WorkspaceIOError(f"recovery backup missing or corrupt: {entry['path']}")
     if manifest["state"] == "prepared":
@@ -257,8 +260,9 @@ def _recover(root: Path, replace: Callable[[Path, Path], None]) -> bool:
 def recover(root: Path) -> bool:
     """Under the caller's lock, roll back a prepared transaction.
 
-    A committed marker only needs cleanup. Modified destinations or corrupt
-    backups cause refusal; recovery never silently overwrites new user changes.
+    A committed marker only needs cleanup. Modified destinations or missing or
+    corrupt required backups cause refusal; already-restored targets need no
+    backup. Recovery never silently overwrites new user changes.
     """
     return _recover(root, _replace)
 

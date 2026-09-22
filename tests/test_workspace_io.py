@@ -166,6 +166,98 @@ with w.WorkspaceLock(root):
             self.assertEqual(a.read_text(), "new plan")
             self.assertEqual(b.read_text(), "new status")
 
+    def test_rollback_cleanup_can_be_interrupted_repeatedly_after_backup_deletion(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw); a, b = self.pair(root)
+            tx = root / IO.TRANSACTION_NAME
+            def reject():
+                raise ValueError("invalid state")
+            def delete_backup_then_interrupt(index):
+                def cleanup(root, tx):
+                    (tx / f"{index}.bak").unlink()
+                    raise OSError("cleanup interrupted after deleting a backup")
+                return cleanup
+            with IO.WorkspaceLock(root):
+                with mock.patch.object(IO, "_cleanup", side_effect=delete_backup_then_interrupt(0)):
+                    with self.assertRaisesRegex(IO.WorkspaceIOError, "recovery required"):
+                        IO.commit_files(root, {a: "new plan", b: "new status"}, {a: IO.hash_file(a), b: IO.hash_file(b)}, reject)
+                self.assertEqual(a.read_text(), "old plan\n")
+                self.assertEqual(b.read_text(), "old status\n")
+                self.assertTrue(IO.pending_transaction(root))
+                with mock.patch.object(IO, "_cleanup", side_effect=delete_backup_then_interrupt(1)):
+                    with self.assertRaisesRegex(OSError, "cleanup interrupted"):
+                        IO.recover(root)
+                self.assertTrue(IO.pending_transaction(root))
+                self.assertTrue(IO.recover(root))
+                self.assertFalse(IO.recover(root))
+            self.assertEqual(a.read_text(), "old plan\n")
+            self.assertEqual(b.read_text(), "old status\n")
+
+    def test_partial_rollback_needs_only_unrestored_targets_backups(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw); a, b = self.pair(root)
+            tx = root / IO.TRANSACTION_NAME
+            original = IO._replace
+            def interrupt_second_restore(source, destination):
+                if source.name == "1.restore.tmp":
+                    raise OSError("second restore interrupted")
+                original(source, destination)
+            def reject():
+                raise ValueError("invalid state")
+            with IO.WorkspaceLock(root):
+                with mock.patch.object(IO, "_replace", side_effect=interrupt_second_restore):
+                    with self.assertRaisesRegex(IO.WorkspaceIOError, "recovery required"):
+                        IO.commit_files(root, {a: "new plan", b: "new status"}, {a: IO.hash_file(a), b: IO.hash_file(b)}, reject)
+                self.assertEqual(a.read_text(), "old plan\n")
+                self.assertEqual(b.read_text(), "new status")
+                (tx / "0.bak").unlink()
+                self.assertTrue(IO.recover(root))
+            self.assertEqual(a.read_text(), "old plan\n")
+            self.assertEqual(b.read_text(), "old status\n")
+            self.assertFalse(IO.pending_transaction(root))
+
+    def test_missing_or_corrupt_needed_backup_refuses_recovery_before_writing(self):
+        for damage in ("missing", "corrupt"):
+            with self.subTest(damage=damage), tempfile.TemporaryDirectory() as raw:
+                root = Path(raw); a, b = self.pair(root)
+                self.interrupted_process(root)
+                tx = root / IO.TRANSACTION_NAME
+                # The second destination is already original; its backup is
+                # unnecessary. The first still needs a valid restore source.
+                (tx / "1.bak").unlink()
+                backup = tx / "0.bak"
+                if damage == "missing":
+                    backup.unlink()
+                else:
+                    backup.write_text("damaged backup")
+                with IO.WorkspaceLock(root):
+                    with self.assertRaisesRegex(IO.WorkspaceIOError, "backup missing or corrupt"):
+                        IO.recover(root)
+                self.assertEqual(a.read_text(), "new plan")
+                self.assertEqual(b.read_text(), "old status\n")
+                self.assertTrue(IO.pending_transaction(root))
+
+    def test_recovery_after_cleanup_interruption_preserves_later_user_changes(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw); a, b = self.pair(root)
+            tx = root / IO.TRANSACTION_NAME
+            def reject():
+                raise ValueError("invalid state")
+            def cleanup(root, tx):
+                (tx / "0.bak").unlink()
+                (tx / "1.bak").unlink()
+                raise OSError("cleanup interrupted")
+            with IO.WorkspaceLock(root):
+                with mock.patch.object(IO, "_cleanup", side_effect=cleanup):
+                    with self.assertRaises(IO.WorkspaceIOError):
+                        IO.commit_files(root, {a: "new plan", b: "new status"}, {a: IO.hash_file(a), b: IO.hash_file(b)}, reject)
+                a.write_text("later user work")
+                with self.assertRaises(IO.ConflictError):
+                    IO.recover(root)
+            self.assertEqual(a.read_text(), "later user work")
+            self.assertEqual(b.read_text(), "old status\n")
+            self.assertTrue(IO.pending_transaction(root))
+
     def test_lock_rejects_another_writer_and_releases_after_exception(self):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)

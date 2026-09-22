@@ -4,7 +4,7 @@
 
 ## 版本与最小布局
 
-新工作区标记为 `plan-your-project/v2.1`，默认只有 `research/PLAN.md` 与 `research/STATUS.md`。`init` 不创建历史记录目录。`enable-tracking` 按预览添加/合并项目 AGENTS，可选 Claude 入口。记录协议随明确的新项目启用约定生效；命令不验证自然语言授权，执行者负责确认调用符合用户范围。
+新工作区标记为 `plan-your-project/v2.1`，默认只有 `research/PLAN.md` 与 `research/STATUS.md`。`init` 不创建历史记录目录，可选 `--with-agents` 同次合并项目入口；现有工作区使用 `enable-tracking`。两者均可按需添加 Claude 桥接。记录协议随明确的新项目启用约定生效；命令不验证自然语言授权，执行者负责确认调用符合用户范围。
 
 统一状态工具可读 v2 与 v2.1，但只写 v2.1；旧工具不保证理解新格式。保留 `init_research_workspace.py` 作为旧 v2 初始化/校验兼容入口，不用其 force-overwrite 修订现有项目：旧入口现已拒绝 force-overwrite，现有项目先明确迁移再用 `refreeze`。安装新 skill 不改变任何项目格式。
 
@@ -117,8 +117,8 @@ id 就是可定位的任务标识；环境、代码SHA、文档SHA分别保存�
 
 ### init、resume、validate
 
-- `init --plan-file plan.json [--language zh|en] [--date YYYY-MM-DD] [--dry-run]`：仅接受空规划工作区；先验证输入和生成结果，再写核心文件并验证完整结果。dry-run 不创建锁或目录。
-- `resume [--json]`：不写入；输出 format、两类修订、hashes.plan/status、完整 status、git.head/branch/worktree、warnings。先读项目规则与STATUS，再读PLAN及必读，核对下一动作相关现场。Git 检查不证明远端任务完成。缺失的本地引用返回明确警告，记录中的完成不能据此认定仍有效；工具不扫描所有报告推断最新结论，相关证据由接手者核实。
+- `init --plan-file plan.json [--language zh|en] [--date YYYY-MM-DD] [--dry-run]`：仅接受空规划工作区；先验证输入和生成结果，再写核心文件并验证完整结果。可重复 `--authorization TEXT` 保存用户实际决定；`--coordinator TEXT` 将共享状态负责人追加到授权段。`--with-agents` 合并现有 AGENTS；`--claude-bridge` 要求同时指定 `--with-agents`。核心文件与入口同一事务提交；只备份被修改的已有入口，不为刚创建的核心文件制造备份。dry-run 展示变更，不创建锁或目录。
+- `resume [--json]`：不写入；输出 format、两类修订、hashes.plan/status、完整 status、git.head/branch/worktree、warnings。先读项目规则与STATUS，再读PLAN及必读，核对下一动作相关现场。Git 检查不证明远端任务完成。旧快照中的本地引用缺失或不再是普通文件时返回明确警告（含旧 v2），记录中的完成不能据此认定仍有效；工具不扫描所有报告推断最新结论，相关证据由接手者核实。
 - `validate`：检查格式、修订、里程碑、引用、完成证据和历史记录。旧v2只读校验；文档损坏返回非零。验证结构不能替代验收内容审查。
 
 ### checkpoint
@@ -135,34 +135,34 @@ id 就是可定位的任务标识；环境、代码SHA、文档SHA分别保存�
 }
 ```
 
-id 匹配 `[a-z0-9]+(?:-[a-z0-9]+)*`，日期严格 YYYY-MM-DD，changes 非空。仅更新STATUS并创建 `research/records/checkpoints/DATE-ID.md`；PLAN保持原字节。status_revision递增。相同ID、相同规范化请求内容重放为unchanged，即使后来状态已推进，也不倒退；同ID不同内容冲突。普通新写入必须匹配两份读取哈希。状态没有新事实则拒绝创建空检查点。旧快照的引用后来缺失时仍可读取并纠正；新的完整状态须通过严格校验，将缺失证据降为未核验并重新评估验收，不能借此保留无依据的通过。
+id 匹配 `[a-z0-9]+(?:-[a-z0-9]+)*`，日期严格 YYYY-MM-DD，changes 非空。仅更新STATUS并创建 `research/records/checkpoints/DATE-ID.md`；PLAN保持原字节。status_revision递增。相同ID、相同规范化请求内容重放为unchanged，即使后来状态已推进，也不倒退；同ID不同内容冲突。普通新写入必须匹配两份读取哈希。状态没有新事实则拒绝创建空检查点。旧快照的引用后来缺失或成为目录时仍可诊断并纠正；新的完整状态须通过严格校验，修正引用并重新评估受影响证据和验收，不能借此保留无依据的通过或绕过路径边界。
 
 checkpoint frontmatter 保存格式、类型、id/date、计划/状态修订、源哈希和请求摘要哈希；正文保存 Changes 与本次新增/改变的 Evidence引用，并标明历史适用期。记录追加后不覆盖，不把计划、状态或实验全文复制进去。历史 decisions/reviews/retrospectives/handoffs 仍按目的懒创建，不建每日流水账。
 
 ### refreeze
 
-`refreeze --plan-file plan.json --id revision-name --summary '修订原因与授权来源' --affected-milestone M3 --expected-plan-hash HASH --expected-status-hash HASH`。
+`refreeze --plan-file plan.json --id revision-name --summary '修订原因与授权来源' --affected-milestone M3 --expected-plan-hash HASH --expected-status-hash HASH`；可选 `--next-action '新修订下已确认的下一动作'`。
 
 输入已确认的新计划；保留其他里程碑状态、当前里程碑（仍存在时）、阻塞、运行任务和证据。自动识别新增或 outcome/acceptance 已变的里程碑；目标、范围、约束、成功标准、选定方案或锁定决定变化时，必须明确给出受影响ID，可重复该参数。执行者负责传播依赖影响，工具不猜测技术依赖。
 
-受影响项保留 execution（已完成的实现不会凭空消失），validation 变 not_run，acceptance 变 pending，科研结论需重验；旧结果、删除项和引用写入变更记录。PLAN修订和STATUS修订各递增；完整三文件结果验证后才成功。当前里程碑被删除、或已验收且出现新待办时，选择一个尚未验收项；未改变的PLAN旧下一步不会覆盖较新的STATUS动作；不默认清空全部进度或阻塞。
+受影响项保留 execution（已完成的实现不会凭空消失），validation 变 not_run，acceptance 变 pending，科研结论需重验；旧结果（含 conclusion）、删除项和证据引用连同适用修订写入变更记录。PLAN修订和STATUS修订各递增；完整三文件结果验证后才成功。当前里程碑被删除、或已验收而需要改指向另一未验收项时，工具重新选择当前项，并要求 `--next-action` 或相较旧PLAN已更新的 `next_action`，否则拒绝写入。`--next-action` 优先于计划中的下一步；当前项未切换时，未改变的PLAN旧下一步保留较新的STATUS动作。工具不猜测切换任务后的安排，也不默认清空其他进度或阻塞。
 
 ### handoff
 
-`handoff` 默认向 stdout 生成带截止时间、源修订及双哈希的 Markdown；包含目标/锁定范围、进展、证据摘要、未完成、下一步和授权限制，网页AI无需访问引用也能理解关键证据。`--output research/records/handoffs/DATE-name.md` 才保存到工作区内的一个新文件，不覆盖已有文件，不自动checkpoint。若有尚未保存的新进展，先按已授权记录协议checkpoint再导出。
+`handoff` 默认向 stdout 生成带来源工作区、截止时间、源修订及双哈希的 Markdown；包含目标/锁定范围、进展、证据摘要、未完成、下一步和授权限制，网页AI无需访问引用也能理解关键证据。来源路径用于定位项目，跨电脑时需映射到目标电脑。`--output research/records/handoffs/DATE-name.md` 才保存到工作区内的一个新文件，不覆盖已有文件，不自动checkpoint。若有尚未保存的新进展，先按已授权记录协议checkpoint再导出。
 
 无写权限AI返回“待同步更新”及源哈希；文件型AI先核实当前基线，相同才提交checkpoint，变化时重新整理。不能说网页建议已保存。交接不是另一个事实源，不覆盖新用户决定；跨电脑仍需用户已有Git/文件同步方式。
 
 ### enable-tracking
 
-默认仅预览；`--claude-bridge` 可选。预览包含修改路径、AGENTS/CLAUDE具体diff、源哈希、旧状态，v2还给出用于人工核对的完整状态模板。应用需明确 `--apply --expected-plan-hash HASH --expected-status-hash HASH`；v2额外提供 `--status-file reviewed-state.json`，逐项保留实际进度、阻塞和证据，不从旧complete标签猜测全部验收。填写状态后先带 --status-file 再预览，查看确切PLAN/STATUS差异，再应用。
+默认仅预览；`--claude-bridge` 可选。预览包含修改路径、AGENTS/CLAUDE具体diff、源哈希、旧状态，v2还给出用于人工核对的完整状态模板。旧引用失效应在预览报告，允许用经核实的迁移输入修复；映射后的新状态严格校验。应用需明确 `--apply --expected-plan-hash HASH --expected-status-hash HASH`；v2额外提供 `--status-file reviewed-state.json`，逐项保留实际进度、阻塞和证据，不从旧complete标签猜测全部验收。填写状态后先带 --status-file 再预览，查看确切PLAN/STATUS差异，再应用。
 
-应用前将PLAN/STATUS及现有AGENTS/CLAUDE原件保存到 `.plan-your-project-backups/<timestamp>/`，与转换共同提交。保留旧记录；PLAN只变格式标记、不变目标或计划修订。STATUS转换为v2.1，并有migration checkpoint引用备份。AGENTS只替换唯一管理块或末尾追加，保留其他内容；CLAUDE只追加缺失的 `@AGENTS.md`。重复启用无变化，不重复备份或叠加入口。v1/mixed不支持此转换。
+应用前将PLAN/STATUS及本次会修改的现有AGENTS/CLAUDE原件保存到 `.plan-your-project-backups/<timestamp>/`，与转换共同提交。保留旧记录；PLAN只变格式标记、不变目标或计划修订。STATUS转换为v2.1，并有migration checkpoint引用备份。AGENTS只替换唯一管理块或末尾追加，保留其他内容；CLAUDE只追加缺失的 `@AGENTS.md`。重复启用无变化，不重复备份或叠加入口。v1/mixed不支持此转换。
 
 ### recover 与并发
 
-一个协调主代理写入，子代理汇报结果。写命令持短暂非阻塞锁，持锁后重读状态；检查双哈希防止旧快照覆盖。锁文件 `.plan-your-project.lock` 可长期存在，不表示任务正在执行，也不是额外事实源。读命令不建锁。
+一个协调主代理写入，子代理汇报结果。写命令持短暂非阻塞锁，持锁后重读状态；检查双哈希防止旧快照覆盖。锁文件 `.plan-your-project.lock` 可长期存在，不表示任务正在执行，也不是额外事实源。读命令不建锁；返回的校验值须与实际解析的原始文件字节及读取前后现场一致，避免把写入后又回滚的暂态误报成有效快照。
 
-多文件替换不是一个物理原子快照。`.plan-your-project-transaction/` 保存持久manifest、原字节与阶段；检查结果完整有效后才清理。普通异常/Ctrl+C尝试回滚；硬退出保留事务，拒绝新写入，resume提醒待恢复。显式 `recover` 回滚prepared事务；已完整验证并标记committed的事务仅清理。恢复遇到后来独立修改或备份损坏时拒绝覆盖并保留备份。恢复后再validate。
+多文件替换不是一个物理原子快照。`.plan-your-project-transaction/` 保存持久manifest、原字节与阶段；检查结果完整有效后才清理。普通异常/Ctrl+C尝试回滚；硬退出保留事务，拒绝新写入，resume提醒待恢复。显式 `recover` 回滚prepared事务；已完整验证并标记committed的事务仅清理。若目标已恢复到原校验值，清理中断后可继续恢复，不要求已被清理的原件备份；仍需还原的目标必须有有效备份。遇到后来独立修改或必需备份损坏时拒绝覆盖并保留现场。恢复后再validate。
 
 写前解析真实路径，拒绝外逸链接、目标符号链接、特殊文件和目录；expected hash也用于保护只读依赖。该机制防合作式并发与中断，不是对恶意进程的文件系统隔离或断电绝对保证。没有加载项目协议的AI仍可能不遵守，崩溃前尚未记录的工作无法由此恢复。

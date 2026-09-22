@@ -21,7 +21,7 @@ research/
 └── STATUS.md    # 当前进展、验证、阻塞、下一步和必要证据
 ```
 
-STATUS 是接续入口；旧历史和详细产物不全塞入它。`init` 只生成上述两份记录；若需要其他 AI 自动发现接续入口，还需运行 `enable-tracking` 预览并应用项目规则合并。需要追溯时按需创建决策、评审、复盘或交接记录；日志、截图、数据等仍存放在项目正常位置。执行、验证与验收分别记录，实验结束不代表研究结论成立。
+STATUS 是接续入口；旧历史和详细产物不全塞入它。`init` 默认只生成上述两份记录；新项目可加 `--with-agents` 同时合并跨 AI 入口，现有项目使用 `enable-tracking` 预览并应用。需要追溯时按需创建决策、评审、复盘或交接记录；日志、截图、数据等仍存放在项目正常位置。执行、验证与验收分别记录，实验结束不代表研究结论成立。
 
 启用 tracking 可将短协议块幂等合并到项目 `AGENTS.md`，保留已有规则；可选 `CLAUDE.md` 的 `@AGENTS.md` 桥接不维护重复协议。其他 AI 无需安装本 skill，也可读取项目入口并按已有格式维护进度。网页端没有写权限时提供“待同步”交接，本地执行者核实后再保存；不能冒称文件已更新。
 
@@ -52,6 +52,14 @@ python scripts/project_state.py checkpoint --help
 python scripts/project_state.py init \
   --workspace-root /path/to/project --plan-file frozen-plan.json
 
+# 新项目同时保存已有授权、协调负责人，并合并跨 AI 入口；先 dry-run 查看差异
+python scripts/project_state.py init \
+  --workspace-root /path/to/project --plan-file frozen-plan.json \
+  --authorization '用户已确认方案并授权保存及关键进展记录；尚未授权实施。' \
+  --coordinator '本项目当前主代理；子代理只汇报证据' \
+  --with-agents --claude-bridge --dry-run
+# 核对后使用同样参数去掉 --dry-run；仅按用户实际授权填写上述文字
+
 # 只读恢复、校验；resume 输出完整状态及 PLAN / STATUS 校验值
 python scripts/project_state.py resume --workspace-root /path/to/project
 python scripts/project_state.py validate --workspace-root /path/to/project
@@ -70,10 +78,10 @@ python scripts/project_state.py handoff --workspace-root /path/to/project
 
 | 命令 | 用途与边界 |
 |---|---|
-| `init --plan-file` | 使用已确认的冻结数据新建 v2.1 工作区。 |
+| `init --plan-file` | 新建 v2.1；可用重复的 `--authorization` 和 `--coordinator` 保存具体边界，`--with-agents` 合并入口。`--claude-bridge` 需同时指定 `--with-agents`。 |
 | `resume` / `validate` | 只读恢复或校验；旧 v2 可只读查看，不静默转换。 |
 | `checkpoint --update-file --expected-plan-hash --expected-status-hash` | 保存真实进展；不改冻结目标，不把状态当授权。 |
-| `refreeze --plan-file --affected-milestone --id --summary --expected-plan-hash --expected-status-hash` | 保存已确认的新计划修订，显式标出受影响里程碑，保留其余进度。 |
+| `refreeze --plan-file --affected-milestone --id --summary --expected-plan-hash --expected-status-hash` | 保存新计划修订，保留无关进度；`--next-action` 明确新的当前动作，避免继续已取消的工作。 |
 | `handoff` / `handoff --output` | 输出交接；`--output` 仅接受工作区相对的新 Markdown 文件路径，不覆盖已有文件。 |
 | `enable-tracking` | 默认预览格式转换和入口合并；旧 v2 需提供经核实的 `--status-file`。 |
 | `enable-tracking --apply --expected-plan-hash --expected-status-hash` | 应用已确认的启用方案；`--claude-bridge` 可选。 |
@@ -84,6 +92,8 @@ python scripts/project_state.py handoff --workspace-root /path/to/project
 ## 兼容与启用
 
 旧 `plan-your-project/v2` 保持只读恢复；只有明确启用 tracking 时，经 preview / apply 和经核实的状态输入转换。v1、混合或不完整布局先报告问题，不自动迁移。启用预览应展示准确路径和内容；应用时保留用户已有入口文字，重复启用不叠加协议或 Claude import。
+
+已记录的本地引用失效时，`resume` 给出警告；可先核实事实，再通过检查点或迁移输入修正，新的完整状态仍须通过严格校验。修订导致当前里程碑切换时（原项被取消，或原项已验收而出现其他待办），必须用已确认的新计划下一步或 `--next-action` 指定替代动作；旧科研结论及其适用版本留在修订记录中。
 
 `scripts/init_research_workspace.py` 保留旧格式兼容；新建 v2.1 使用 `project_state.py init`。`bootstrap_research_workspace.py` 是 deprecated 兼容入口，不用于新工作区。工作区格式版本不等于上游发布标签；本地修改不会自动发布到源仓库。
 
