@@ -78,7 +78,7 @@ class ProjectStateCLITests(unittest.TestCase):
 
     def snapshot(self, workspace=None):
         root = workspace or self.workspace
-        return {str(path.relative_to(root)): path.read_bytes() for path in root.rglob("*") if path.is_file()}
+        return {path.relative_to(root).as_posix(): path.read_bytes() for path in root.rglob("*") if path.is_file()}
 
     def resume(self, workspace=None):
         result = self.run_cli("resume", workspace=workspace)
@@ -412,6 +412,8 @@ class ProjectStateCLITests(unittest.TestCase):
         claude = "# Existing local instructions\n\nKeep unrelated user changes.\n"
         (self.workspace / "AGENTS.md").write_text(agents, encoding="utf-8")
         (self.workspace / "CLAUDE.md").write_text(claude, encoding="utf-8")
+        agents_bytes = (self.workspace / "AGENTS.md").read_bytes()
+        claude_bytes = (self.workspace / "CLAUDE.md").read_bytes()
         seed = self.initialize(self.base / "state-schema-source")
         migrated_state = self.progressing_state(seed)
         migrated_state["state"] = "blocked"
@@ -427,6 +429,11 @@ class ProjectStateCLITests(unittest.TestCase):
         old_plan_bytes = (self.workspace / "research/PLAN.md").read_bytes()
         old_status_bytes = legacy_status_path.read_bytes()
         state_path = self.input_json(migrated_state)
+        tracking_authorization = "User authorized key-event tracking for the reviewed migration only."
+        tracking_coordinator = "Migration coordinator"
+        tracking_arguments = ["--authorization", tracking_authorization, "--coordinator", tracking_coordinator]
+        expected_state = copy.deepcopy(migrated_state)
+        expected_state["authorization"] += [tracking_authorization, "Coordinator: " + tracking_coordinator]
         hashes = {
             "hashes": {
                 "plan": hashlib.sha256((self.workspace / "research/PLAN.md").read_bytes()).hexdigest(),
@@ -434,13 +441,13 @@ class ProjectStateCLITests(unittest.TestCase):
             }
         }
         before = self.snapshot()
-        self.assert_success(self.run_cli("enable-tracking", "--status-file", state_path, "--claude-bridge"))
+        self.assert_success(self.run_cli("enable-tracking", "--status-file", state_path, "--claude-bridge", *tracking_arguments))
         self.assertEqual(self.snapshot(), before)
         self.assert_failure(self.run_cli("enable-tracking", "--apply", "--claude-bridge", *self.expected_arguments(hashes)))
         self.assertEqual(self.snapshot(), before)
-        self.assert_success(self.run_cli("enable-tracking", "--apply", "--status-file", state_path, "--claude-bridge", *self.expected_arguments(hashes)))
+        self.assert_success(self.run_cli("enable-tracking", "--apply", "--status-file", state_path, "--claude-bridge", *tracking_arguments, *self.expected_arguments(hashes)))
         current = self.resume()
-        self.assertEqual(current["status"], migrated_state)
+        self.assertEqual(current["status"], expected_state)
         self.assertEqual(current["status"]["current_milestone"], "M2")
         self.assertEqual(current["status"]["milestones"][0]["acceptance"], "accepted")
         self.assertEqual(current["status"]["milestones"][1]["execution"], "running")
@@ -448,8 +455,8 @@ class ProjectStateCLITests(unittest.TestCase):
         backups = {key: value for key, value in self.snapshot().items() if key not in before}
         self.assertIn(old_plan_bytes, backups.values())
         self.assertIn(old_status_bytes, backups.values())
-        self.assertIn(agents.encode("utf-8"), backups.values())
-        self.assertIn(claude.encode("utf-8"), backups.values())
+        self.assertIn(agents_bytes, backups.values())
+        self.assertIn(claude_bytes, backups.values())
         self.assertIn(agents, (self.workspace / "AGENTS.md").read_text(encoding="utf-8"))
         bridge = (self.workspace / "CLAUDE.md").read_text(encoding="utf-8")
         self.assertIn(claude, bridge)

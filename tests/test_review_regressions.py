@@ -278,7 +278,12 @@ class ReviewRegressionTests(unittest.TestCase):
         outside = self.base / "outside-secret.txt"
         outside.write_text("Not an allowed project reference", encoding="utf-8")
         ref.unlink()
-        ref.symlink_to(outside)
+        try:
+            ref.symlink_to(outside)
+        except OSError as exc:
+            if getattr(exc, "winerror", None) == 1314:
+                self.skipTest(f"symbolic-link safety test requires symlink permission: {exc}")
+            raise
         before = self.snapshot()
         result = self.run_cli("resume")
         self.assert_failure(result)
@@ -304,13 +309,18 @@ class ReviewRegressionTests(unittest.TestCase):
         corrected = ps.initial_state(fixtures.plan())
         corrected["summary"] = "Legacy state reviewed; unavailable report is no longer required"
         corrected_path = self.input_json(corrected)
-        preview = self.run_cli("enable-tracking", "--status-file", corrected_path)
+        tracking_authorization = "User authorized key-event tracking for the reviewed legacy migration only."
+        tracking_coordinator = "Legacy migration coordinator"
+        tracking_arguments = ["--authorization", tracking_authorization, "--coordinator", tracking_coordinator]
+        expected = copy.deepcopy(corrected)
+        expected["authorization"] += [tracking_authorization, "Coordinator: " + tracking_coordinator]
+        preview = self.run_cli("enable-tracking", "--status-file", corrected_path, *tracking_arguments)
         self.assert_success(preview)
         self.assertEqual(self.snapshot(), before)
-        self.assert_success(self.run_cli("enable-tracking", "--apply", "--status-file", corrected_path, *self.expected_arguments(current)))
+        self.assert_success(self.run_cli("enable-tracking", "--apply", "--status-file", corrected_path, *tracking_arguments, *self.expected_arguments(current)))
         migrated = self.resume()
         self.assertEqual(migrated["format"], ps.FORMAT)
-        self.assertEqual(migrated["status"], corrected)
+        self.assertEqual(migrated["status"], expected)
         self.assert_success(self.run_cli("validate"))
         self.assertIn(before["research/STATUS.md"], self.snapshot().values())
 

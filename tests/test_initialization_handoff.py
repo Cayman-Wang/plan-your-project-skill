@@ -3,6 +3,7 @@
 import contextlib
 import io
 import json
+from pathlib import Path
 import re
 import sys
 import unittest
@@ -28,6 +29,9 @@ class InitializationHandoffTests(unittest.TestCase):
     def init_arguments(self, *arguments):
         return ["--plan-file", str(self.input_json(fixtures.plan())), *arguments]
 
+    def tracking_arguments(self, *arguments):
+        return ["--enable-tracking", "--authorization", "Planning records are authorized; implementation is not authorized.", "--coordinator", "Main coordinator", *arguments]
+
     def substantive_files(self):
         return {path: raw for path, raw in self.snapshot().items() if path != IO.LOCK_NAME}
 
@@ -43,7 +47,7 @@ class InitializationHandoffTests(unittest.TestCase):
             "User authorized planning and project records only; implementation is not authorized.",
             "Network access and publication require a separate user instruction.",
         ]
-        args = self.init_arguments("--with-agents", "--claude-bridge", "--coordinator", "Main coordinator")
+        args = self.init_arguments("--with-agents", "--claude-bridge", "--enable-tracking", "--coordinator", "Main coordinator")
         for instruction in authorization:
             args += ["--authorization", instruction]
         self.assert_success(self.run_cli("init", *args))
@@ -67,7 +71,7 @@ class InitializationHandoffTests(unittest.TestCase):
         }
         for name, content in originals.items():
             (self.workspace / name).write_bytes(content)
-        self.assert_success(self.run_cli("init", *self.init_arguments("--with-agents", "--claude-bridge")))
+        self.assert_success(self.run_cli("init", *self.init_arguments(*self.tracking_arguments("--with-agents", "--claude-bridge"))))
         backups = {
             path.name: path.read_bytes()
             for path in (self.workspace / ".plan-your-project-backups").rglob("*")
@@ -82,7 +86,7 @@ class InitializationHandoffTests(unittest.TestCase):
     def test_init_does_not_back_up_unchanged_bridge_or_new_core_files(self):
         bridge = b"# Existing rules\r\n@AGENTS.md\r\n"
         (self.workspace / "CLAUDE.md").write_bytes(bridge)
-        self.assert_success(self.run_cli("init", *self.init_arguments("--with-agents", "--claude-bridge")))
+        self.assert_success(self.run_cli("init", *self.init_arguments(*self.tracking_arguments("--with-agents", "--claude-bridge"))))
         self.assertEqual((self.workspace / "CLAUDE.md").read_bytes(), bridge)
         self.assertEqual(set(self.substantive_files()), {"research/PLAN.md", "research/STATUS.md", "AGENTS.md", "CLAUDE.md"})
 
@@ -91,26 +95,27 @@ class InitializationHandoffTests(unittest.TestCase):
         (self.workspace / "CLAUDE.md").write_bytes(b"# Existing Claude rules\r\n")
         before = self.snapshot()
         result = self.run_cli("init", *self.init_arguments(
-            "--with-agents", "--claude-bridge", "--authorization", "Planning only; no implementation.",
+            "--with-agents", "--claude-bridge", "--enable-tracking", "--authorization", "Planning only; no implementation.",
             "--coordinator", "Main coordinator", "--dry-run",
         ))
         self.assert_success(result)
         preview = json.loads(result.stdout)
         self.assertEqual(preview["result"], "preview")
         expected = {"research/PLAN.md", "research/STATUS.md", "AGENTS.md", "CLAUDE.md"}
-        self.assertTrue(expected <= set(preview["diffs"]))
+        diffs = {Path(name).as_posix(): value for name, value in preview["diffs"].items()}
+        self.assertTrue(expected <= set(diffs))
         for name in expected:
-            self.assertIn("+++ ", preview["diffs"][name])
-            self.assertIn("@@", preview["diffs"][name])
-        self.assertIn("Planning only; no implementation.", preview["diffs"]["research/STATUS.md"])
-        self.assertIn("Coordinator: Main coordinator", preview["diffs"]["research/STATUS.md"])
+            self.assertIn("+++ ", diffs[name])
+            self.assertIn("@@", diffs[name])
+        self.assertIn("Planning only; no implementation.", diffs["research/STATUS.md"])
+        self.assertIn("Coordinator: Main coordinator", diffs["research/STATUS.md"])
         self.assertEqual(self.snapshot(), before)
 
     def test_init_validation_failure_rolls_back_core_entries_and_backups_together(self):
         originals = {"AGENTS.md": b"Existing project rules\r\n", "CLAUDE.md": b"Existing Claude rules\r\n"}
         for name, content in originals.items():
             (self.workspace / name).write_bytes(content)
-        args = ["init", "--workspace-root", str(self.workspace), "--json", *self.init_arguments("--with-agents", "--claude-bridge")]
+        args = ["init", "--workspace-root", str(self.workspace), "--json", *self.init_arguments(*self.tracking_arguments("--with-agents", "--claude-bridge"))]
         validation_saw_complete_write = []
         original_read = STATE.read_workspace
         def reject_written_state(root, *args, **kwargs):
@@ -138,8 +143,13 @@ class InitializationHandoffTests(unittest.TestCase):
                 outside = self.base / (name + ".outside")
                 original = b"Preserve external rules\r\n"
                 outside.write_bytes(original)
-                (root / name).symlink_to(outside)
-                result = self.run_cli("init", *self.init_arguments("--with-agents", "--claude-bridge"), workspace=root)
+                try:
+                    (root / name).symlink_to(outside)
+                except OSError as exc:
+                    if getattr(exc, "winerror", None) == 1314:
+                        self.skipTest(f"symbolic-link safety test requires symlink permission: {exc}")
+                    raise
+                result = self.run_cli("init", *self.init_arguments(*self.tracking_arguments("--with-agents", "--claude-bridge")), workspace=root)
                 self.assert_failure(result)
                 self.assertEqual(json.loads(result.stderr)["result"], "error")
                 self.assertIn("symbolic link", json.loads(result.stderr)["message"])
@@ -166,7 +176,7 @@ class InitializationHandoffTests(unittest.TestCase):
                 before = self.snapshot(root)
                 result = self.run_cli("handoff", workspace=root)
                 self.assert_success(result)
-                self.assertIn(str(root), result.stdout)
+                self.assertIn(str(root.resolve()), result.stdout)
                 headings = re.findall(r"(?m)^(#{1,6}) (.+)$", result.stdout)
                 self.assertEqual(sum(level == "#" for level, title in headings), 1)
                 self.assertIn(("###", scope), headings)

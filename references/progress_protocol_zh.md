@@ -6,7 +6,7 @@
 
 新项目生成或现有项目启用 tracking 时，一次明确约定目标工作区、记录范围和共享状态负责人。项目启用后，执行者在同一已授权任务的关键事件后维护检查点，不每次再要求“允许记录进度”。目标、范围、方案与验收发生实质变化仍需重新讨论；记录中的下一步不等于用户已授权该工作。进展协议不覆盖提交、推送、部署或对外写入权限。
 
-新建时可用 `init --authorization`（可重复）及 `--coordinator` 将已有授权和负责人直接写入 STATUS；用 `--with-agents` 同次合并项目入口，按需加 `--claude-bridge`。先用 `--dry-run` 查看变更。无需为了补上初始化时已知的授权再造一条进展检查点；参数不替用户授予权限。
+普通 `init` 仅保存计划，STATUS 为 `tracking: disabled`。用户已同时授权启用记录时，用 `init --enable-tracking --authorization`（可重复）及 `--coordinator` 将记录范围/来源和负责人直接写入 STATUS；再按需用 `--with-agents` 合并项目入口、`--claude-bridge` 桥接。先用 `--dry-run` 查看变更。已有 disabled 工作区用 `enable-tracking` 预览/应用，首次启用同样需要上述授权和负责人；已启用工作区重复合并入口无需重复提供。参数记录已有决定，不替用户授予权限。disabled 时明确请求的单次 checkpoint 仍可执行，并保持 disabled。
 
 旧 v2 仅做只读恢复。用户明确请求启用后，用 `enable-tracking` 先预览文件转换和入口合并，旧 v2 转换还须提交经现场核实的 `--status-file`，不能猜测旧进度；再通过 `--apply` 及预期校验值按用户已确认的变更应用；若尚无具体预览，先展示它。不得因用户问“进度如何”而升级工作区。发现 v1、混合、无效或写入中断状态时，先诊断，并按契约使用 `recover`；不自动覆盖或猜测缺失内容。
 
@@ -19,15 +19,15 @@
 - 按需记录：需要长期追溯的决策、评审、复盘和交接。STATUS 只保留摘要与路径，不复制全文。
 - 项目常规产物：代码、数据、实验日志、测试报告、截图等仍在其正常位置。规划目录保存引用，不搬运产物或复制聊天记录。
 
-v2.1 STATUS 使用固定英文二级标题 `Summary`、`Milestones`、`Running Tasks`、`Blockers`、`Next Action`、`Must Read`、`Evidence`、`Authorization`，正文说明可用中文。里程碑/证据等结构化记录按契约使用 `### ID` 与 `- field: value`；不是把整段 JSON 嵌入 Markdown。metadata 的 `status_revision` 表示状态修订，`plan_revision` 对齐 PLAN，`tracking: key_events` 表示启用关键事件记录。具体字段不得自行扩展。
+v2.1 STATUS 使用固定英文二级标题 `Summary`、`Milestones`、`Running Tasks`、`Blockers`、`Next Action`、`Must Read`、`Evidence`、`Authorization`，正文说明可用中文。里程碑/证据等结构化记录按契约使用 `### ID` 与 `- field: value`；不是把整段 JSON 嵌入 Markdown。metadata 的 `status_revision` 表示状态修订，`plan_revision` 对齐 PLAN，`tracking: key_events` 表示启用关键事件记录，`disabled` 表示未启用自动记录。普通 checkpoint/refreeze 保留该值，不能借更新进度启用记录。具体字段不得自行扩展。
 
-执行、验证和验收分开：`execution` 为 `pending/running/done`，`validation` 为 `not_run/passed/failed`，`acceptance` 为 `pending/accepted/rejected`；适用的研究结论使用 `conclusion: not_applicable/supported/unverified`。实验运行结束只能推进 execution，不能自动把 validation、acceptance 或研究结论设为成功。跳过与不可用的验证在说明/证据中注明，其结构化验证仍为 `not_run`，不能增加不存在的枚举。
+执行、验证和验收分开：`execution` 为 `pending/running/done`，`validation` 为 `not_run/passed/failed`，`acceptance` 为 `pending/accepted/rejected`。研究 conclusion 使用 `supported`（证据支持）、`not_supported`（按已执行协议不支持）、`inconclusive`（已评估但不足以判定）、`unverified`（尚未核实）或 `not_applicable`。前三者必须有 observed/historical 证据，并在 summary 说明针对哪项假设及适用边界。负结果不等于验证失败；若验收要求是严格完成评估，负结果也可验收；若要求证明改善，则不能改口径。实验运行结束只能推进 execution，不能自动把 validation、acceptance 或研究结论设为成功。跳过与不可用的验证在说明/证据中注明，其结构化验证仍为 `not_run`。
 
 摘要应尽量短，以约 100 行作为整理目标而非截断规则。超长时保留当前相关证据、有效约束和活跃阻塞，把确有追溯价值的细节移到已授权的 lazy record。只有当前接续确实需要的记录进入 `must_read`，不要把全部历史强制读入。
 
 ## 检查点触发
 
-以下事件发生于已授权执行中时记录检查点，相关事件可合并一次：
+以下事件发生于已启用 tracking 的已授权执行中时记录检查点，相关事件可合并一次：
 
 1. 里程碑交付、验收接受或原先结果被否定。
 2. 关键验证结果改变，包括通过、失败或因条件缺失无法验证。
@@ -62,17 +62,17 @@ v2.1 STATUS 使用固定英文二级标题 `Summary`、`Milestones`、`Running T
 
 已有本地引用缺失或不再是普通文件时，读取旧状态应报告警告，不能据此继续声称完成。核实后在完整更新或迁移输入中修正引用及受影响的验证、验收；新状态仍须严格校验，不绕过路径边界。
 
-`handoff` 默认输出到会话，只有显式 `--output` 才保存到工作区相对的新 Markdown 文件；不覆盖已有交接。handoff 包含它对应的计划修订、任务位置、时间和代码/证据基线。若 STATUS 或现场已推进，旧 handoff 仅供参考；不把旧下一步覆写新状态，不重做已验证的工作，也不因旧记录写了“完成”忽略新增未完成改动。无从判断时报告时效未知，进行最小现场核查。
+`handoff` 默认输出到会话，只有显式 `--output` 才保存到工作区相对的新 Markdown 文件；不覆盖已有交接。handoff 包含计划修订、任务位置、时间、代码/证据基线和 tracking 状态，并携带假设、风险及验证、开放问题与冻结就绪度；无文件权限的接收者也须能看见方案成立的条件。若 STATUS 或现场已推进，旧 handoff 仅供参考；不把旧下一步覆写新状态，不重做已验证的工作，也不因旧记录写了“完成”忽略新增未完成改动。无从判断时报告时效未知，进行最小现场核查。
 
 ## 多代理协作与写入
 
-同一项目只指定一个共享 STATUS 写入负责人。子代理向负责人报告实际改动、证据、阻塞与建议下一步；不得自行重写共享计划或创建竞争入口。不同项目/独立工作流应明确各自工作区和记录归属。
+同一项目只指定一个共享 STATUS 写入负责人，Authorization 的 `Coordinator: NAME` 只表示当前负责人。交接时用已确认的 --coordinator 替换旧条目，将旧/新负责人及交接依据写入现有检查点；不把新旧负责人并列为当前值。相同负责人重复提交不产生新记录。旧记录已有多个负责人时先只读诊断，再按明确指定修正，不自行猜选，也不要求重复授予已有许可。子代理向负责人报告实际改动、证据、阻塞与建议下一步；不得自行重写共享计划或创建竞争入口。不同项目/独立工作流应明确各自工作区和记录归属。
 
 负责人写前读取最新状态并使用命令提供的版本/并发校验。检测到状态变化时重新读取，合并不冲突事实；冲突决定交给负责人或用户，不采用“最后写入覆盖”。原子替换只防止半个文件，不解决陈旧快照覆盖。手工更新也要先重读现有文件、保持契约结构，并在写后自查；没有工具时仅维护当前 STATUS，不伪造机器检查点、校验值或工具校验结果。新增 Evidence / Running Tasks 仍须包含项目入口模板列明的全部字段。无法遵守单写规则时交回协调者。
 
 ## 计划修订与进度保留
 
-`refreeze` 不是进度清零。先列出改变的决定、里程碑及验收，再映射已有工作和证据：不受影响的完成项保留；只重开依赖已变前提或验收的项目；被替代的里程碑及旧科研结论保留适用修订与证据。更新 PLAN 后，STATUS 指向同一新修订，并明确仍有效的当前动作、证据和阻塞。当前里程碑被取消，或原项已验收而修订后需要转向另一未验收项时，必须使用已确认的新计划下一步或 `--next-action` 指定替代动作；不能沿用失效的动态下一步，也不把无关任务重置为未开始。
+`refreeze` 不是进度清零。先列出改变的决定、里程碑及验收，再映射已有工作和证据：不受影响的完成项保留；只重开依赖已变前提或验收的项目；被替代的里程碑及旧科研结论保留适用修订与证据。现有 refreeze 检查点保存变化字段的 before/after 和源修订，包括旧决策、旧验收，不能只存哈希并依赖未必存在的 Git 历史。更新 PLAN 后，STATUS 指向同一新修订，并明确仍有效的当前动作、证据和阻塞。当前里程碑被取消，或原项已验收而修订后需要转向另一未验收项时，必须使用已确认的新计划下一步或 `--next-action` 指定替代动作；不能沿用失效的动态下一步，也不把无关任务重置为未开始。
 
 ## 网页端与离线交接
 

@@ -181,7 +181,7 @@ class InitResearchWorkspaceTests(unittest.TestCase):
             original_replace = INIT._replace
 
             def fail_status_commit(source, destination):
-                if source.suffix == ".tmp" and destination == status_path:
+                if source.suffix == ".tmp" and destination.name == "STATUS.md":
                     raise OSError("injected STATUS commit failure")
                 original_replace(source, destination)
 
