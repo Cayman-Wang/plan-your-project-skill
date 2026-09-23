@@ -143,6 +143,88 @@ class CoordinatorHandoffTests(unittest.TestCase):
                 self.assert_failure(self.checkpoint(self.update(state, identifier), current))
                 self.assertEqual(self.snapshot(), before)
 
+    def test_explicit_owner_only_checkpoint_preserves_disabled_mode_and_progress(self):
+        self.assert_success(self.run_cli(
+            "init", "--plan-file", self.input_json(fixtures.plan()),
+            "--authorization", "User authorized import implementation and explicitly requested records only.",
+            "--coordinator", "Alice",
+        ))
+        initial = self.resume()
+        progressed = self.progressing_state(initial)
+        progressed["authorization"] = copy.deepcopy(initial["status"]["authorization"])
+        progressed["state"] = "blocked"
+        progressed["blockers"] = ["M2 awaits the conversion fixture"]
+        self.assert_success(self.checkpoint(self.update(progressed, "explicit-progress-note"), initial))
+        current = self.resume()
+        self.assertEqual(current["tracking"], "disabled")
+
+        reason = "User requested only Alice-to-Bob handoff; automatic recording remains disabled."
+        state = copy.deepcopy(current["status"])
+        state["authorization"] = [item for item in state["authorization"]
+                                  if not item.lstrip().startswith("Coordinator:")]
+        state["authorization"] += [reason, "Coordinator: Bob"]
+        request = self.update(state, "owner-only-handoff", "Save the requested ownership change")
+        request["changes"] = ["Coordinator changed: Alice -> Bob", reason]
+        before = self.snapshot()
+
+        self.assert_failure(self.checkpoint(request, initial))
+        self.assertEqual(self.snapshot(), before)
+        self.assert_success(self.checkpoint(request, current))
+        after = self.resume()
+        self.assertEqual(after["tracking"], "disabled")
+        self.assertEqual(after["status"], state)
+        self.assertEqual(after["hashes"]["plan"], current["hashes"]["plan"])
+        self.assertEqual(after["status_revision"], current["status_revision"] + 1)
+        files_after = self.snapshot()
+        added = set(files_after) - set(before)
+        self.assertEqual(len(added), 1)
+        record_path = added.pop()
+        self.assertTrue(record_path.startswith("research/records/checkpoints/"))
+        record = files_after[record_path].decode("utf-8")
+        for value in ("Alice", "Bob", reason, current["hashes"]["plan"], current["hashes"]["status"]):
+            self.assertIn(value, record)
+        for name in before:
+            if name != "research/STATUS.md":
+                self.assertEqual(files_after[name], before[name])
+        for path in ("AGENTS.md", "CLAUDE.md", ".plan-your-project-backups"):
+            self.assertFalse((self.workspace / path).exists())
+        self.assert_success(self.run_cli("validate"))
+        self.assert_success(self.checkpoint(request, current))
+        self.assertEqual(self.snapshot(), files_after)
+
+    def test_explicit_checkpoint_repairs_ambiguous_disabled_owners_without_activation(self):
+        self.assert_success(self.run_cli(
+            "init", "--plan-file", self.input_json(fixtures.plan()), "--coordinator", "Alice",
+        ))
+        status_path = self.workspace / "research/STATUS.md"
+        status_path.write_text(status_path.read_text(encoding="utf-8").replace(
+            "- Coordinator: Alice\n", "- Coordinator: Alice\n- Coordinator: Bob\n",
+        ), encoding="utf-8")
+        current = self.resume()
+        self.assertEqual(current["tracking"], "disabled")
+        self.assertTrue(any("Ambiguous coordinator" in warning for warning in current["warnings"]))
+        self.assert_failure(self.run_cli("validate"))
+
+        state = copy.deepcopy(current["status"])
+        state["authorization"] = [item for item in state["authorization"]
+                                  if not item.lstrip().startswith("Coordinator:")]
+        reason = "User confirmed Carol replaces both old owner entries; recording remains disabled."
+        state["authorization"] += [reason, "Coordinator: Carol"]
+        request = self.update(state, "resolve-disabled-owners", "Record the confirmed current owner")
+        request["changes"] = ["Coordinator changed: Alice, Bob -> Carol", reason]
+        self.assert_success(self.checkpoint(request, current))
+        after = self.resume()
+        self.assertEqual(after["tracking"], "disabled")
+        self.assertEqual(after["status"], state)
+        self.assertEqual(after["hashes"]["plan"], current["hashes"]["plan"])
+        self.assertEqual(self.coordinators(after["status"]), ["Carol"])
+        self.assert_success(self.run_cli("validate"))
+        records = list((self.workspace / "research/records/checkpoints").glob("*.md"))
+        self.assertEqual(len(records), 1)
+        history = records[0].read_text(encoding="utf-8")
+        for value in ("Alice", "Bob", "Carol", reason):
+            self.assertIn(value, history)
+
 
 if __name__ == "__main__":
     unittest.main()
