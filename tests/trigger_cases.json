@@ -1,0 +1,102 @@
+{
+  "schema_version": "1.1",
+  "purpose": "Routing recall inputs for this skill's description plus the latest measured result. status=measured requires a sibling evidence file; status=not_run means no live model routing has been measured. Presence of a case is not a pass.",
+  "status": "measured",
+  "expect": "Positive prompts should load plan-your-project; negative prompts should not.",
+  "cases": [
+    {
+      "id": "discuss_before_planning",
+      "prompt": "帮我规划一下这个项目的下一阶段，先讨论，别写文件。",
+      "expect_skill": true,
+      "last_result": "pass",
+      "last_skills_loaded": [
+        "plan-your-project"
+      ]
+    },
+    {
+      "id": "save_approved_plan",
+      "prompt": "这个方案我们定下来了，帮我存成项目计划。",
+      "expect_skill": true,
+      "last_result": "pass",
+      "last_skills_loaded": [
+        "plan-your-project"
+      ]
+    },
+    {
+      "id": "resume_existing_project",
+      "prompt": "帮我接手昨天那个项目，看看实际做到哪了。",
+      "expect_skill": true,
+      "last_result": "pass",
+      "last_skills_loaded": [
+        "plan-your-project"
+      ]
+    },
+    {
+      "id": "handoff_to_another_ai",
+      "prompt": "帮我把这个项目交接给另一个 AI，写清楚它该从哪里继续。",
+      "expect_skill": true,
+      "last_result": "pass",
+      "last_skills_loaded": [
+        "plan-your-project"
+      ]
+    },
+    {
+      "id": "record_progress_after_verification",
+      "prompt": "更新一下项目进度，记下今天的验证结果。",
+      "expect_skill": true,
+      "last_result": "pass",
+      "last_skills_loaded": [
+        "plan-your-project"
+      ]
+    },
+    {
+      "id": "research_design_discussion",
+      "prompt": "这个研究课题该怎么设计实验，先聊聊可行性和验收标准。",
+      "expect_skill": true,
+      "last_result": "pass",
+      "last_skills_loaded": [
+        "plan-your-project"
+      ]
+    },
+    {
+      "id": "typo_fix_should_not_trigger",
+      "prompt": "帮我改一下 README 里的错别字。",
+      "expect_skill": false,
+      "last_result": "pass",
+      "last_skills_loaded": []
+    },
+    {
+      "id": "runtime_error_should_not_trigger",
+      "prompt": "这段 Python 报错了，帮我看看哪里有问题。",
+      "expect_skill": false,
+      "last_result": "pass",
+      "last_skills_loaded": [
+        "systematic-debugging"
+      ]
+    },
+    {
+      "id": "image_conversion_should_not_trigger",
+      "prompt": "把这张图转成 SVG。",
+      "expect_skill": false,
+      "last_result": "pass",
+      "last_skills_loaded": [
+        "claude-design"
+      ]
+    },
+    {
+      "id": "casual_question_should_not_trigger",
+      "prompt": "今天天气怎么样？",
+      "expect_skill": false,
+      "last_result": "pass",
+      "last_skills_loaded": []
+    }
+  ],
+  "measured": {
+    "date": "2026-10-29",
+    "host": "Hermes 0.22.0 installed runtime, AIAgent + native skill index",
+    "model": "gpt-6-astra-900k",
+    "provider": "openai-codex",
+    "result": "10/10 matched expectation",
+    "evidence": "tests/routing_eval_20261029.json"
+  }
+}

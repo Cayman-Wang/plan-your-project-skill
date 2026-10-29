@@ -31,6 +31,8 @@ STATUS 是接续入口；旧历史和详细产物不全塞入它。`init` 默认
 
 ## 使用示例
 
+Codex 可使用下面的 `$plan-your-project` 写法。Hermes 中可直接说“请使用 plan-your-project 技能……”，先加载技能；首次使用、安装和 `/plan` 的区别见 [Hermes 适配说明](references/hermes_integration_zh.md)。
+
 ```text
 $plan-your-project 帮我规划这个项目，先讨论，不创建文件。
 按刚确认的方案生成计划文件，并启用开发过程的关键事件进度记录。
@@ -109,10 +111,30 @@ python scripts/project_state.py handoff --workspace-root /path/to/project
 - [进展协议](references/progress_protocol_zh.md)：检查点、证据、冷启动、并发与网页交接。
 - [文件契约](references/file_contract_zh.md)：精确输入格式与校验。
 - [AGENTS 模板](assets/AGENTS_tracking.md) / [Claude 桥接](assets/CLAUDE_bridge.md)：项目入口资源。
+- [交接模板](assets/TEMPLATE_handoff.md) / [校验脚本](scripts/handoff_check.py)：可选；接手方看不到原对话时按必需小节填写并校验。
 
 ## 安装
 
 源仓库为 `https://github.com/Cayman-Wang/plan-your-project-skill`。安装已审阅的版本到宿主的 skills 目录；更新已有安装时先备份，不将本地修改覆盖掉。项目中的 AGENTS 入口是接续协议的共享载体，不要求所有 AI 都具备同一 skill 安装位置。未安装 CLI 的代理可遵守项目模板手工维护 STATUS；它不能因此宣称执行了自动校验或创建了机器可验证的检查点。
+
+### Hermes
+
+- 优先安装已审阅的完整技能目录；不要只复制 `SKILL.md` 或主脚本。URL 安装依赖入口中的显式资源链接，本版补齐了间接 Python 依赖和原有复盘模板。
+- 按 [Hermes 适配说明](references/hermes_integration_zh.md) 核对实际配置档案、安装目录、版本和入口。安装不会自动创建项目记录、启用 tracking、执行开发或注册后台钩子。
+- 本地适配未发布到源仓库前，远程安装仍获取上游版本，不会得到本地改动；当前适配应使用审阅过的本地目录。Codex 的 `agents/openai.yaml` 与旧入口均保留。
+
+### 验证适配
+
+在完整仓库副本中运行；测试仅使用隔离临时目录，临时目录应指定到宿主允许的 scratch 路径：
+
+```bash
+python -B -m unittest discover -s tests -p 'test_hermes_portability.py' -v
+python -B -m unittest discover -s tests -p 'test_*.py' -v
+```
+
+`tests/hermes_behavior_evals.json` 是需要另行运行的宿主行为评测输入。文件契约和脚本测试通过不代表模型已通过这些对话评测，不把历史报告或静态检查当作新的模型实测。
+
+`tests/trigger_cases.json` 的 `status` 为 `measured` 时，必须同时提供 `measured` 元数据和 `tests/routing_eval_20261029.json` 逐例结果；测试会校验两侧一致，缺少证据或结果不符即失败。当前记录来自 Hermes 单模型、每例一次的真实路由测量（10/10 符合预期）；更换模型或修改描述后应重新测量，不沿用旧结论。记录只证明技能被选中并进入正确流程开头，不证明后续任务执行正确。
 
 ## License
 

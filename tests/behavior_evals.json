@@ -137,6 +137,23 @@
         "If the authoritative files change again before writing, refresh and reconcile instead of overwriting newer changes.",
         "Do not reset to the pilot action, infer completion from the old page, or claim synchronization without a successful verification."
       ]
+    },
+    {
+      "id": "clarification_backfill_maps_answers",
+      "prompt": "先聊清楚再计划：我只说了要做一个资产检查工具，别的还没定。",
+      "raw_project_summary": {
+        "initial_request": "Build an asset-checking tool. No scope, acceptance, or risk tradeoff has been stated yet.",
+        "readable_facts": "The repository already has a validator, a small sample set, and one known false-positive report. These can be inspected without asking the owner.",
+        "owner_answers": "The owner says: prefer catching missing assets over avoiding false alarms; only single-asset checks are in scope this round; a check counts as successful when it reproduces the known false positive and reports it.",
+        "authorization": "Discussion only. No plan file, project records, or implementation."
+      },
+      "observable_criteria": [
+        "Inspect the readable validator, sample set, and false-positive report before asking the owner.",
+        "After each answer, write it back to a named Brief field instead of leaving it only in chat: scope and non-goals, acceptance, and risk tradeoff.",
+        "Map every answered question to at least one field; turn an answer that fits no field into an Open Decision or drop it.",
+        "State the updated understanding as what is decided, what remains open, and the next step before asking another round of 1-3 questions.",
+        "Do not write any project record or start implementation under this discussion-only request."
+      ]
     }
   ]
 }

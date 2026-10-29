@@ -1,15 +1,25 @@
 ---
 name: plan-your-project
-description: Plan software or research projects, discuss scope and approaches before deciding whether to save records, freeze decisions, and create a minimal planning workspace. Use also to resume project work, inspect progress, record requested handoffs, or maintain checkpoints during authorized execution in a tracking-enabled workspace. Do not use for unrelated one-off fixes or generic scaffolding without project planning.
+description: Discuss, plan, resume, or hand off projects.
 ---
 
 # Plan Your Project
 
 Use `DISCUSS -> FREEZE -> GENERATE -> MAINTAIN`. Keep the frozen destination separate from observed execution state. Planning does not authorize implementation; enabling progress tracking does not authorize new project work.
 
+## When to Use
+
+Plan software or research projects, discuss scope and approaches before deciding whether to save records, freeze decisions, and create a minimal planning workspace. Use also to resume project work, inspect progress, record requested handoffs, or maintain checkpoints during authorized execution in a tracking-enabled workspace. Do not use for unrelated one-off fixes or generic scaffolding without project planning.
+
+## Hermes
+
+On first use in Hermes, read the [integration guide](references/hermes_integration_zh.md). Resolve the installed `skill_dir` from `skill_view`; it is not the user's project directory. Keep script paths anchored there and pass the selected project explicitly through `--workspace-root`.
+
+When the current turn is Hermes `/plan`, obey its plan-only restrictions and exact output path (normally `.hermes/plans/`). Do not run `init`, `checkpoint`, `refreeze`, `enable-tracking`, `recover`, or `handoff --output`, or create/update project records or entry files, even when tracking was enabled earlier. State any deferred checkpoint without claiming it was saved. Only the plan artifact authorized for this turn may be written; current instructions take precedence over previous tracking agreements. Outside that mode, the existing DISCUSS / FREEZE / GENERATE / MAINTAIN permissions below remain unchanged.
+
 ## Route The Request
 
-- **DISCUSS:** explore a new, ambiguous, or materially changed project. Inspect relevant user-scoped code, configuration, data, experiment records and papers before asking about discoverable facts. Ask only for owner judgments that affect outcomes, scope, acceptance or significant tradeoffs. Identify evidence, assumptions and open decisions. Discussion and read-only research do not write project records.
+- **DISCUSS:** explore a new, ambiguous, or materially changed project. Inspect relevant user-scoped code, configuration, data, experiment records and papers before asking about discoverable facts. Ask only for owner judgments that affect outcomes, scope, acceptance or significant tradeoffs. Write each answered question back to the Brief fields before the next round; an answer that fits no field becomes an Open Decision or is dropped. Identify evidence, assumptions and open decisions. Discussion and read-only research do not write project records.
 - **FREEZE:** confirm a coherent decision set. A lightweight conversation may use a compact view, but the full freezing semantics must be satisfied. Reuse decisions and authorization already supplied; do not ask the user to approve the same action twice.
 - **GENERATE:** create the workspace when the user has explicitly authorized saving the frozen plan. Approval of its direction alone is not permission to create files; an instruction that clearly approves the plan and asks to save it supplies both permissions together. Inspect the target first.
 - **RESUME / read-only status:** begin with `research/STATUS.md`, then read `research/PLAN.md` and all current `must_read` paths. Compare recorded state with relevant live evidence. Report differences and unknowns without modifying files, including during read-only reviews or resume previews.
@@ -38,6 +48,16 @@ Resume by checking project identity, revisions, current task, evidence relevance
 A change to the destination—goal, success criteria, scope, locked decisions, milestone acceptance or key constraints—returns to DISCUSS / FREEZE. Preserve previous decisions, explain replacements and use existing authorization or obtain missing authorization to write the revision. Reconcile affected milestones explicitly: retain unrelated completed work and its valid evidence; reopen only work whose acceptance or premises changed. Preserve earlier scientific conclusions with their evidence and applicable revision. When the current milestone changes because it was removed or already accepted while other work remains, supply the confirmed replacement next action. Routine progress changes do not rewrite PLAN.
 
 A useful execution handoff carries the approved scope, relevant inputs, locked constraints, current deliverable, acceptance evidence, assumptions, risks and their checks, open decisions, freeze readiness and next action. Keep these conditions in exported text when its recipient cannot access PLAN. Refreeze records retain changed frozen content before and after the revision, including old acceptance, without relying on Git history. Prefer the applicable implementation or research-execution skill when available. If none exists and the user has authorized execution, exit the planning workflow and continue through the ordinary implementation workflow, subject to the current runtime mode and permissions. Do not stop authorized work merely because an implementation skill is missing. If only planning was requested, finish with the plan and handoff without executing it.
+
+When the recipient cannot see this conversation or PLAN, start from the optional [handoff template](assets/TEMPLATE_handoff.md). Fill every required section, write `None` where a section genuinely does not apply, and validate the file with [handoff_check.py](scripts/handoff_check.py) using `python` or `python3` as available. The template is optional and never obliges the planner to write implementation code.
+
+## Runtime Files
+
+Keep the complete runtime bundle together, including indirect imports. Direct-URL installers must also fetch [workspace_io.py](scripts/workspace_io.py), which is imported by the entry scripts. Retain [project_state.py](scripts/project_state.py), [init_research_workspace.py](scripts/init_research_workspace.py), and the compatibility entry [bootstrap_research_workspace.py](scripts/bootstrap_research_workspace.py).
+
+Retrospectives remain optional, created only when authorized; keep both existing templates available: [Chinese](assets/TEMPLATE_retrospective_zh.md) and [English](assets/TEMPLATE_retrospective_en.md). Distribution retains the [MIT license](assets/LICENSE).
+
+Handoff support ships with the optional [handoff template](assets/TEMPLATE_handoff.md) and its [section checker](scripts/handoff_check.py).
 
 ## Verify And Report
 
