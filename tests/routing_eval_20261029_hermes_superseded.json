@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "purpose": "Measured routing results for tests/trigger_cases.json. Recorded from real model turns; a prompt in the fixture is not itself a pass.",
+  "purpose": "Superseded Hermes routing measurement, retained for traceability only. It measured the earlier English-only description on a single Hermes model and does not describe the shipped bilingual description. Do not reuse it as evidence for the current skill; re-measure instead.",
   "evaluated_at": "2026-10-29T10:42:50+08:00",
   "host": "Hermes 0.22.0 installed runtime, AIAgent + native skill index",
   "model": "gpt-6-astra-900k",
@@ -132,5 +132,6 @@
       "api_calls": 1,
       "seconds": 22.397
     }
-  ]
+  ],
+  "superseded_reason": "The SKILL.md description changed to a bilingual Chinese/English form after this measurement. Per the repository rule that a changed description requires a fresh measurement, tests/trigger_cases.json is now status=not_run."
 }

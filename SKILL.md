@@ -1,6 +1,13 @@
 ---
 name: plan-your-project
-description: Discuss, plan, resume, or hand off projects.
+display_name: Plan Your Project
+display_name_en: Plan Your Project
+description: "Discuss, plan, resume, or hand off projects. 规划软件或科研项目：先讨论方案与验收标准，冻结后保存为项目记录；也可读取当前进度、记录关键事件检查点、生成交接说明。Use when the user asks to plan a project, discuss scope before implementation, freeze and save a plan, check what is actually done, update progress, or hand the work to another AI."
+description_zh: "讨论并规划软件或科研项目：先讨论方案、范围与验收标准，冻结决策后保存为最小项目记录；也可只读核对当前进度、在已授权执行中记录关键事件检查点、生成交接说明。触发场景：帮我规划项目、先讨论别写文件、方案定下来了存成计划、项目做到哪了、更新一下进度、交接给另一个 AI、这个研究课题怎么设计实验。"
+description_en: "Discuss, plan, resume, or hand off projects. Plan software or research work: explore scope and acceptance criteria first, freeze the decisions, then save a minimal planning workspace; also resume recorded state, record key-event checkpoints during authorized work, and produce handoff notes. Use when the user asks to plan a project, discuss scope before implementation, freeze and save a plan, check what is actually done, update progress, or hand work to another AI."
+version: 1.0.0
+author: Cayman-Wang
+agent_created: true
 ---
 
 # Plan Your Project
@@ -16,6 +23,16 @@ Plan software or research projects, discuss scope and approaches before deciding
 On first use in Hermes, read the [integration guide](references/hermes_integration_zh.md). Resolve the installed `skill_dir` from `skill_view`; it is not the user's project directory. Keep script paths anchored there and pass the selected project explicitly through `--workspace-root`.
 
 When the current turn is Hermes `/plan`, obey its plan-only restrictions and exact output path (normally `.hermes/plans/`). Do not run `init`, `checkpoint`, `refreeze`, `enable-tracking`, `recover`, or `handoff --output`, or create/update project records or entry files, even when tracking was enabled earlier. State any deferred checkpoint without claiming it was saved. Only the plan artifact authorized for this turn may be written; current instructions take precedence over previous tracking agreements. Outside that mode, the existing DISCUSS / FREEZE / GENERATE / MAINTAIN permissions below remain unchanged.
+
+## WorkBuddy
+
+On first use in WorkBuddy, read the [WorkBuddy integration guide](references/workbuddy_integration_zh.md). WorkBuddy injects the loaded skill's base directory when it activates a skill; that directory holds these instructions, scripts and templates, and is not the user's project directory. Anchor script paths to that base directory and pass the selected project explicitly through `--workspace-root`. Read `research/STATUS.md` and `research/PLAN.md` from the project, not from the skill directory.
+
+WorkBuddy runs a task in one of three modes. In Ask mode, only answer from what you have read; do not write project records or other files. In Plan mode, restrict writes to the plan artifact the user asked for; do not run `init`, `checkpoint`, `refreeze`, `enable-tracking`, `recover`, or `handoff --output`, and do not create or update project records or entry files, even when tracking was enabled earlier. State any deferred checkpoint without claiming it was saved. In Agent mode, the DISCUSS / FREEZE / GENERATE / MAINTAIN permissions below apply unchanged. The user's current instruction always takes precedence over an earlier tracking agreement.
+
+Use the tools this session actually provides. Read and inspect with the file-reading tools, write with the file-editing tools, run scripts with the shell tool, ask the user a focused question with the question tool instead of inventing an answer, and let subagents report findings and evidence without rewriting shared STATUS. On Windows, call the interpreter as `python` and pass paths as `C:/...`; `python3` is not guaranteed to exist. Keep shell quoting intact for paths containing spaces or non-ASCII characters, and do not change the working directory just to find the scripts.
+
+WorkBuddy reads project-level rules from `AGENTS.md` and from `.codebuddy/CODEBUDDY.md`, and treats project `.codebuddy/` configuration as shared team configuration. The `--with-agents` merge writes the same bounded tracking block into `AGENTS.md`, so it stays the shared entry point for any AI that joins the project; `--claude-bridge` targets Claude Code only and is not needed for WorkBuddy. When both a project `AGENTS.md` and a WorkBuddy session memory directory exist, `research/STATUS.md` remains the authoritative execution state for this skill and the session memory stays an append-only activity log; do not copy project state into the session memory directory, and do not treat the session memory as a substitute for `STATUS.md`.
 
 ## Route The Request
 

@@ -146,8 +146,24 @@ class RoutingDescriptionTests(unittest.TestCase):
     def test_description_covers_all_four_intents(self):
         content = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         description = next(line.removeprefix("description: ") for line in content.splitlines() if line.startswith("description: "))
-        self.assertEqual(description, "Discuss, plan, resume, or hand off projects.")
-        self.assertLessEqual(len(description), 60)
+        lowered = description.lower()
+        for intent in ("discuss", "plan", "resume", "hand off"):
+            self.assertIn(intent, lowered)
+        for trigger in ("规划", "讨论", "进度", "交接"):
+            self.assertIn(trigger, description)
+        self.assertLessEqual(len(description), 1024)
+
+    def test_host_description_fields_stay_consistent(self):
+        content = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        fields = {}
+        for line in content.splitlines():
+            if line.startswith(("description: ", "description_zh: ", "description_en: ")):
+                key, _, value = line.partition(": ")
+                fields[key] = value.strip().strip('"')
+        self.assertEqual(set(fields), {"description", "description_zh", "description_en"})
+        for value in fields.values():
+            self.assertTrue(value)
+            self.assertLessEqual(len(value), 1024)
 
     def test_trigger_cases_cover_positive_and_negative_prompts(self):
         path = ROOT / "tests/trigger_cases.json"
@@ -207,10 +223,12 @@ class RoutingDescriptionTests(unittest.TestCase):
 class CrossHostParityTests(unittest.TestCase):
     def test_shared_sections_avoid_host_specific_tools(self):
         content = (ROOT / "SKILL.md").read_text(encoding="utf-8")
-        before, marker, after = content.partition("## Hermes")
-        self.assertTrue(marker, "Keep the Hermes section explicit")
-        _, _, remainder = after.partition("\n## ")
-        shared = before + "\n## " + remainder
+        shared = content
+        for heading in ("## Hermes", "## WorkBuddy"):
+            before, marker, after = shared.partition(heading)
+            self.assertTrue(marker, f"Keep the {heading} section explicit")
+            _, _, remainder = after.partition("\n## ")
+            shared = before + "\n## " + remainder
         for token in ("skill_view", "clarify", "delegate_task", "/plan"):
             with self.subTest(token=token):
                 self.assertNotIn(token, shared)

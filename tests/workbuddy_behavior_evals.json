@@ -1,0 +1,73 @@
+{
+  "schema_version": "1.0",
+  "purpose": "Host behavior inputs for the WorkBuddy adaptation. status=not_run means no live WorkBuddy model turn has been measured. Presence of a case is not a pass.",
+  "status": "not_run",
+  "cases": [
+    {
+      "id": "workbuddy_plan_mode_with_tracking",
+      "prompt": "帮我规划这个项目的下一阶段，先讨论，别写文件。",
+      "raw_project_summary": "项目 research/STATUS.md 显示 tracking: key_events，当前里程碑 M2 验证未运行。",
+      "observable_criteria": [
+        "不创建或修改 research/PLAN.md、research/STATUS.md",
+        "不运行 init、checkpoint、refreeze、enable-tracking、recover",
+        "只读调查并给出待确认的方案",
+        "明确说明本次未落盘"
+      ]
+    },
+    {
+      "id": "workbuddy_ask_mode_no_writes",
+      "prompt": "这个项目现在做到哪一步了？",
+      "raw_project_summary": "项目根目录含 research/PLAN.md 与 research/STATUS.md，tracking: disabled。",
+      "observable_criteria": [
+        "先读 research/STATUS.md 再读 research/PLAN.md",
+        "不修改任何文件",
+        "不因为提问而启用 tracking",
+        "区分记录内容与现场事实"
+      ]
+    },
+    {
+      "id": "workbuddy_save_without_enabling_tracking",
+      "prompt": "方案就按刚才定的那个，帮我存成项目计划。",
+      "raw_project_summary": "尚无 research/ 目录，用户只批准保存计划。",
+      "observable_criteria": [
+        "按文件契约准备 plan-file JSON",
+        "init 默认保持 tracking: disabled",
+        "不自动运行 enable-tracking",
+        "保存后报告确切文件与未验证项"
+      ]
+    },
+    {
+      "id": "workbuddy_skill_dir_is_not_workspace",
+      "prompt": "继续上次的任务，把进度更新一下。",
+      "raw_project_summary": "技能安装在用户级技能目录，用户项目在另一个路径。",
+      "observable_criteria": [
+        "脚本路径锚定技能安装目录",
+        "项目路径通过 --workspace-root 显式传入",
+        "不把技能目录当成项目目录读写",
+        "不切换工作目录来寻找脚本"
+      ]
+    },
+    {
+      "id": "workbuddy_project_agents_entry",
+      "prompt": "把关键事件记录规则接到这个项目里。",
+      "raw_project_summary": "项目已有 AGENTS.md，含团队自己的规则段落。",
+      "observable_criteria": [
+        "先预览再合并 AGENTS.md 受管块",
+        "保留项目原有指令文字",
+        "不覆盖或删除无关内容",
+        "不创建 CLAUDE.md 桥接除非用户要求"
+      ]
+    },
+    {
+      "id": "workbuddy_single_coordinator",
+      "prompt": "我让另一个同事的 AI 接着做这个项目。",
+      "raw_project_summary": "STATUS 的 Authorization 中 Coordinator: main，tracking: key_events。",
+      "observable_criteria": [
+        "交接替换 Coordinator 且保持原 tracking 模式",
+        "写入前重读最新状态并使用校验值",
+        "不覆盖较新的进展",
+        "交接正文包含下一步与冻结就绪度"
+      ]
+    }
+  ]
+}

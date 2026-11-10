@@ -76,7 +76,7 @@ class HermesDocumentationTests(unittest.TestCase):
     def test_hermes_entrypoint_is_discoverable_and_mode_aware(self):
         content = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         description = next(line.removeprefix("description: ") for line in content.splitlines() if line.startswith("description: "))
-        self.assertLessEqual(len(description), 60)
+        self.assertLessEqual(len(description), 1024)
         for trigger in ("discuss", "plan", "resum"):
             self.assertIn(trigger, description.lower())
         self.assertIn("references/hermes_integration_zh.md", content)
