@@ -1,108 +1,180 @@
 {
   "schema_version": "1.1",
-  "purpose": "Routing recall inputs for this skill's description plus the latest measured result. status=measured requires a sibling evidence file; status=not_run means no live model routing has been measured. Presence of a case is not a pass. The description changed to a bilingual Chinese/English form, so the previous Hermes measurement no longer describes the shipped description and must be re-measured.",
-  "status": "not_run",
+  "purpose": "Routing recall inputs for this skill's description plus the latest measured result. status=measured requires a sibling evidence file; status=not_run means no live model routing has been measured. Presence of a case is not a pass.",
+  "status": "measured",
   "expect": "Positive prompts should load plan-your-project; negative prompts should not.",
   "cases": [
     {
       "id": "discuss_before_planning",
       "prompt": "帮我规划一下这个项目的下一阶段，先讨论，别写文件。",
-      "expect_skill": true
+      "expect_skill": true,
+      "last_result": "pass",
+      "last_skills_loaded": [
+        "plan-your-project"
+      ]
     },
     {
       "id": "save_approved_plan",
       "prompt": "这个方案我们定下来了，帮我存成项目计划。",
-      "expect_skill": true
+      "expect_skill": true,
+      "last_result": "pass",
+      "last_skills_loaded": [
+        "plan-your-project"
+      ]
     },
     {
       "id": "resume_existing_project",
       "prompt": "帮我接手昨天那个项目，看看实际做到哪了。",
-      "expect_skill": true
+      "expect_skill": true,
+      "last_result": "pass",
+      "last_skills_loaded": [
+        "plan-your-project"
+      ]
     },
     {
       "id": "handoff_to_another_ai",
       "prompt": "帮我把这个项目交接给另一个 AI，写清楚它该从哪里继续。",
-      "expect_skill": true
+      "expect_skill": true,
+      "last_result": "pass",
+      "last_skills_loaded": [
+        "plan-your-project"
+      ]
     },
     {
       "id": "record_progress_after_verification",
       "prompt": "更新一下项目进度，记下今天的验证结果。",
-      "expect_skill": true
+      "expect_skill": true,
+      "last_result": "pass",
+      "last_skills_loaded": [
+        "plan-your-project"
+      ]
     },
     {
       "id": "research_design_discussion",
       "prompt": "这个研究课题该怎么设计实验，先聊聊可行性和验收标准。",
-      "expect_skill": true
+      "expect_skill": true,
+      "last_result": "pass",
+      "last_skills_loaded": [
+        "plan-your-project"
+      ]
     },
     {
       "id": "typo_fix_should_not_trigger",
       "prompt": "帮我改一下 README 里的错别字。",
-      "expect_skill": false
+      "expect_skill": false,
+      "last_result": "pass",
+      "last_skills_loaded": []
     },
     {
       "id": "runtime_error_should_not_trigger",
       "prompt": "这段 Python 报错了，帮我看看哪里有问题。",
-      "expect_skill": false
+      "expect_skill": false,
+      "last_result": "pass",
+      "last_skills_loaded": []
     },
     {
       "id": "image_conversion_should_not_trigger",
       "prompt": "把这张图转成 SVG。",
-      "expect_skill": false
+      "expect_skill": false,
+      "last_result": "pass",
+      "last_skills_loaded": []
     },
     {
       "id": "casual_question_should_not_trigger",
       "prompt": "今天天气怎么样？",
-      "expect_skill": false
+      "expect_skill": false,
+      "last_result": "pass",
+      "last_skills_loaded": []
     },
     {
       "id": "discuss_before_planning_zh2",
       "prompt": "我想做个新项目，先聊聊该怎么做",
-      "expect_skill": true
+      "expect_skill": true,
+      "last_result": "pass",
+      "last_skills_loaded": [
+        "plan-your-project"
+      ]
     },
     {
       "id": "save_approved_plan_zh2",
       "prompt": "就按刚才讨论的方案，帮我落成文件存起来",
-      "expect_skill": true
+      "expect_skill": true,
+      "last_result": "pass",
+      "last_skills_loaded": [
+        "plan-your-project"
+      ]
     },
     {
       "id": "resume_existing_project_zh2",
       "prompt": "接着上午那个活儿继续干，现在什么进度了",
-      "expect_skill": true
+      "expect_skill": true,
+      "last_result": "pass",
+      "last_skills_loaded": [
+        "plan-your-project"
+      ]
     },
     {
       "id": "handoff_to_another_ai_zh2",
       "prompt": "我换模型了，把上下文交接过去让它接上",
-      "expect_skill": true
+      "expect_skill": true,
+      "last_result": "pass",
+      "last_skills_loaded": [
+        "plan-your-project"
+      ]
     },
     {
       "id": "record_progress_zh2",
       "prompt": "刚跑完测试，把结果记到项目进度里",
-      "expect_skill": true
+      "expect_skill": true,
+      "last_result": "pass",
+      "last_skills_loaded": [
+        "plan-your-project"
+      ]
     },
     {
       "id": "research_design_zh2",
       "prompt": "这个课题的实验该怎么设计才靠谱",
-      "expect_skill": true
+      "expect_skill": true,
+      "last_result": "pass",
+      "last_skills_loaded": [
+        "plan-your-project"
+      ]
     },
     {
       "id": "git_commit_should_not_trigger",
       "prompt": "帮我把这个改动提交一下",
-      "expect_skill": false
+      "expect_skill": false,
+      "last_result": "pass",
+      "last_skills_loaded": []
     },
     {
       "id": "code_explain_should_not_trigger",
       "prompt": "这段代码是什么意思，给我讲讲",
-      "expect_skill": false
+      "expect_skill": false,
+      "last_result": "pass",
+      "last_skills_loaded": []
     },
     {
       "id": "list_files_should_not_trigger",
       "prompt": "看看这个目录下有哪些文件",
-      "expect_skill": false
+      "expect_skill": false,
+      "last_result": "pass",
+      "last_skills_loaded": []
     },
     {
       "id": "email_draft_should_not_trigger",
       "prompt": "帮我写封邮件说明这个情况",
-      "expect_skill": false
+      "expect_skill": false,
+      "last_result": "pass",
+      "last_skills_loaded": []
     }
-  ]
+  ],
+  "measured": {
+    "date": "2026-11-10",
+    "host": "WorkBuddy desktop, isolated subagent per case with a dedicated empty workspace",
+    "model": "Space Bunny (lite routing variant)",
+    "provider": "workbuddy-desktop",
+    "result": "20/20 matched expectation",
+    "evidence": "tests/routing_eval_workbuddy_cn_20261110.json"
+  }
 }

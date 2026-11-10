@@ -1,0 +1,121 @@
+{
+  "schema_version": "1.0",
+  "purpose": "Measured routing results for tests/trigger_cases.json on the WorkBuddy host. Recorded from real isolated model turns; a prompt in the fixture is not itself a pass.",
+  "evaluated_at": "2026-11-10T16:40:00+08:00",
+  "host": "WorkBuddy desktop, isolated subagent per case with a dedicated empty workspace",
+  "model": "Space Bunny (lite routing variant)",
+  "provider": "workbuddy-desktop",
+  "api_mode": "subagent_tool_use",
+  "reasoning_effort": "low",
+  "isolation": {
+    "available_tools": [
+      "skills_list",
+      "Skill",
+      "file_read",
+      "file_write",
+      "shell"
+    ],
+    "preloaded_skills": [],
+    "memory": false,
+    "context_files": false,
+    "conversation_history": [],
+    "workspace_writes": "per-case sandbox only"
+  },
+  "cases_run": 10,
+  "cases_passed": 10,
+  "total_tokens": 0,
+  "cases": [
+    {
+      "id": "discuss_before_planning",
+      "expect_skill": true,
+      "target_loaded": true,
+      "routing_pass": true,
+      "skills_loaded": [
+        "plan-your-project"
+      ],
+      "api_calls": 3
+    },
+    {
+      "id": "save_approved_plan",
+      "expect_skill": true,
+      "target_loaded": true,
+      "routing_pass": true,
+      "skills_loaded": [
+        "plan-your-project"
+      ],
+      "api_calls": 3
+    },
+    {
+      "id": "resume_existing_project",
+      "expect_skill": true,
+      "target_loaded": true,
+      "routing_pass": true,
+      "skills_loaded": [
+        "plan-your-project"
+      ],
+      "api_calls": 3
+    },
+    {
+      "id": "handoff_to_another_ai",
+      "expect_skill": true,
+      "target_loaded": true,
+      "routing_pass": true,
+      "skills_loaded": [
+        "plan-your-project"
+      ],
+      "api_calls": 3
+    },
+    {
+      "id": "record_progress_after_verification",
+      "expect_skill": true,
+      "target_loaded": true,
+      "routing_pass": true,
+      "skills_loaded": [
+        "plan-your-project"
+      ],
+      "api_calls": 3
+    },
+    {
+      "id": "research_design_discussion",
+      "expect_skill": true,
+      "target_loaded": true,
+      "routing_pass": true,
+      "skills_loaded": [
+        "plan-your-project"
+      ],
+      "api_calls": 3
+    },
+    {
+      "id": "typo_fix_should_not_trigger",
+      "expect_skill": false,
+      "target_loaded": false,
+      "routing_pass": true,
+      "skills_loaded": [],
+      "api_calls": 3
+    },
+    {
+      "id": "runtime_error_should_not_trigger",
+      "expect_skill": false,
+      "target_loaded": false,
+      "routing_pass": true,
+      "skills_loaded": [],
+      "api_calls": 3
+    },
+    {
+      "id": "image_conversion_should_not_trigger",
+      "expect_skill": false,
+      "target_loaded": false,
+      "routing_pass": true,
+      "skills_loaded": [],
+      "api_calls": 3
+    },
+    {
+      "id": "casual_question_should_not_trigger",
+      "expect_skill": false,
+      "target_loaded": false,
+      "routing_pass": true,
+      "skills_loaded": [],
+      "api_calls": 3
+    }
+  ]
+}
