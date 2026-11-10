@@ -146,6 +146,8 @@ python -B -m unittest discover -s tests -p 'test_*.py' -v
 
 `tests/trigger_cases.json` 的 `status` 为 `measured` 时，必须同时提供 `measured` 元数据和对应证据文件的逐例结果；测试会校验两侧一致，缺少证据或结果不符即失败。描述改为中英双语后，原先针对纯英文描述的 Hermes 单模型测量（10/10）已随 `tests/routing_eval_20261029_hermes_superseded.json` 一并归档，不再作为当前描述的证据；`status` 现为 `not_run`，需在目标宿主重新测量后才能写回 `measured`。记录只证明技能被选中并进入正确流程开头，不证明后续任务执行正确。
 
+`tests/trigger_cases_workbuddy.json` 是 WorkBuddy 宿主专用的中文路由用例（20 条，正 12 负 8），与上游 Codex/Hermes 的 10 条分开存放。两份文件的结构契约（正负例计数、ID 唯一、`not_run` 时不得出现 `result`/`last_result`、不得嵌入本机绝对路径）由 `tests/test_handoff_contract.py` 统一守护，`measured` 状态的逐例证据一致性同样逐文件校验。它当前为 `not_run`，需在 WorkBuddy 宿主实测后才能写回 `measured`。
+
 ## License
 
 MIT

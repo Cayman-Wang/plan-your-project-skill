@@ -166,17 +166,23 @@ class RoutingDescriptionTests(unittest.TestCase):
             self.assertLessEqual(len(value), 1024)
 
     def test_trigger_cases_cover_positive_and_negative_prompts(self):
-        path = ROOT / "tests/trigger_cases.json"
+        self.assert_trigger_case_shape("tests/trigger_cases.json", 10, 6, 4)
+
+    def test_workbuddy_trigger_cases_cover_positive_and_negative_prompts(self):
+        self.assert_trigger_case_shape("tests/trigger_cases_workbuddy.json", 20, 12, 8)
+
+    def assert_trigger_case_shape(self, relative, total, positives_expected, negatives_expected):
+        path = ROOT / relative
         self.assertTrue(path.is_file(), "Provide real routing inputs separately from measured results")
         data = json.loads(path.read_text(encoding="utf-8"))
         self.assertIn(data["status"], {"not_run", "measured"})
         cases = data["cases"]
-        self.assertEqual(len(cases), 10)
+        self.assertEqual(len(cases), total)
         positives = [c for c in cases if c["expect_skill"]]
         negatives = [c for c in cases if not c["expect_skill"]]
-        self.assertEqual(len(positives), 6)
-        self.assertEqual(len(negatives), 4)
-        self.assertEqual(len({c["id"] for c in cases}), 10)
+        self.assertEqual(len(positives), positives_expected)
+        self.assertEqual(len(negatives), negatives_expected)
+        self.assertEqual(len({c["id"] for c in cases}), total)
         self.assertTrue(any("交接" in c["prompt"] for c in positives), "Cover the handoff phrasing")
         for case in cases:
             with self.subTest(case=case["id"]):
@@ -185,12 +191,24 @@ class RoutingDescriptionTests(unittest.TestCase):
                     self.assertNotIn("result", case)
                     self.assertNotIn("last_result", case)
 
+    def test_trigger_case_files_embed_no_local_absolute_path(self):
+        for relative in ("tests/trigger_cases.json", "tests/trigger_cases_workbuddy.json"):
+            with self.subTest(file=relative):
+                text = (ROOT / relative).read_text(encoding="utf-8")
+                self.assertNotIn("C:/", text, f"{relative} must not embed a local absolute path")
+                self.assertNotIn("C:\\\\", text, f"{relative} must not embed a local absolute path")
+
     def test_measured_routing_evidence_matches_fixture(self):
         """A measured status must ship evidence that agrees with every case and its expectation."""
-        path = ROOT / "tests/trigger_cases.json"
+        for relative in ("tests/trigger_cases.json", "tests/trigger_cases_workbuddy.json"):
+            with self.subTest(file=relative):
+                self.assert_measured_evidence(relative)
+
+    def assert_measured_evidence(self, relative):
+        path = ROOT / relative
         data = json.loads(path.read_text(encoding="utf-8"))
         if data["status"] == "not_run":
-            self.skipTest("Routing cases have not been measured yet")
+            self.skipTest(f"{relative} has not been measured yet")
         measured = data["measured"]
         for key in ("date", "host", "model", "provider", "result", "evidence"):
             self.assertTrue(measured.get(key), f"measured fixture needs {key}")
@@ -214,7 +232,7 @@ class RoutingDescriptionTests(unittest.TestCase):
                     self.assertIn("plan-your-project", record["skills_loaded"])
                 if record["routing_pass"] and not case["expect_skill"]:
                     self.assertNotIn("plan-your-project", record["skills_loaded"])
-        for rel in ("tests/trigger_cases.json", measured["evidence"]):
+        for rel in (relative, measured["evidence"]):
             text = (ROOT / rel).read_text(encoding="utf-8")
             self.assertNotIn("C:/", text, f"{rel} must not embed a local absolute path")
             self.assertNotIn("C:\\\\", text, f"{rel} must not embed a local absolute path")
